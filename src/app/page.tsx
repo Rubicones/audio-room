@@ -1,10 +1,13 @@
 "use client";
 
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { DefaultLoadingManager } from "three";
 import * as Tone from "tone";
 import {
   disposeAudioEngine,
+  getTrackAcousticData,
+  type TrackAcousticData,
   toggleTransport,
   waitForToneLoaded,
 } from "@/components/canvas/audioEngine";
@@ -46,6 +49,178 @@ function buildDemoTracks(startIndex: number): TrackConfig[] {
   }));
 }
 
+function RotationDial({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const dialRef = useRef<HTMLDivElement | null>(null);
+
+  const setFromClientPoint = (clientX: number, clientY: number) => {
+    const dial = dialRef.current;
+    if (!dial) return;
+    const rect = dial.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = clientX - cx;
+    const dy = clientY - cy;
+    const next = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+    onChange(next);
+  };
+
+  const rad = (value * Math.PI) / 180;
+  const orbit = 12;
+  const dotX = Math.sin(rad) * orbit;
+  const dotY = -Math.cos(rad) * orbit;
+
+  return (
+    <div className={styles.rotationDialWrap}>
+      <div
+        ref={dialRef}
+        className={styles.rotationDial}
+        onPointerDown={(event) => {
+          const target = event.currentTarget;
+          target.setPointerCapture(event.pointerId);
+          setFromClientPoint(event.clientX, event.clientY);
+        }}
+        onPointerMove={(event) => {
+          const target = event.currentTarget;
+          if (!target.hasPointerCapture(event.pointerId)) return;
+          setFromClientPoint(event.clientX, event.clientY);
+        }}
+        onPointerUp={(event) => {
+          const target = event.currentTarget;
+          if (target.hasPointerCapture(event.pointerId)) {
+            target.releasePointerCapture(event.pointerId);
+          }
+        }}
+      >
+        <span
+          className={styles.rotationDialDot}
+          style={{
+            transform: `translate(calc(-50% + ${dotX}px), calc(-50% + ${dotY}px))`,
+          }}
+        />
+      </div>
+      <span className={styles.rotationDialValue}>{Math.round(value)}deg</span>
+    </div>
+  );
+}
+
+const TOOLTIP_DELAY_MS = 300;
+
+function HelpTooltip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
+  const timerRef = useRef<number | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const updatePosition = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const popW = 240;
+    const popH = 120;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const canRight = rect.right + 10 + popW < vw - 8;
+    const left = canRight ? rect.right + 10 : Math.max(8, rect.left - popW - 10);
+    const top = rect.top + popH + 8 < vh ? rect.top : Math.max(8, rect.bottom - popH);
+    setPopoverStyle({ left, top, width: Math.min(popW, vw - 16), position: "fixed" });
+  };
+
+  const showDelayed = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      updatePosition();
+      setOpen(true);
+    }, TOOLTIP_DELAY_MS);
+  };
+
+  const hide = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+    setOpen(false);
+  };
+
+  useEffect(() => {
+    const onResize = () => {
+      if (open) updatePosition();
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    };
+  }, [open]);
+
+  return (
+    <span className={styles.helpWrap}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={styles.helpTrigger}
+        aria-label="Show explanation"
+        onMouseEnter={showDelayed}
+        onMouseLeave={hide}
+        onFocus={showDelayed}
+        onBlur={hide}
+        onClick={() => {
+          if (!open) updatePosition();
+          setOpen((v) => !v);
+        }}
+      >
+        ?
+      </button>
+      {open ? (
+        <span className={styles.helpBubble} style={popoverStyle}>
+          {text}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+type SummaryItemProps = {
+  label: string;
+  value: string;
+};
+
+function SummaryItem({ label, value }: SummaryItemProps) {
+  return (
+    <div className={styles.summaryRow}>
+      <span className={styles.summaryKey}>{label}</span>
+      <span className={styles.summaryValue}>{value}</span>
+      <button
+        type="button"
+        className={styles.copyBtn}
+        onClick={() => {
+          void navigator.clipboard.writeText(`${label}: ${value}`);
+        }}
+      >
+        copy
+      </button>
+    </div>
+  );
+}
+
+function renderSummaryRows(data: TrackAcousticData) {
+  return (
+    <>
+      <SummaryItem
+        label="Gain"
+        value={Number.isFinite(data.gainDb) ? `${data.gainDb.toFixed(1)} dB` : "-inf dB"}
+      />
+      <SummaryItem label="Panning" value={data.panningText} />
+      <SummaryItem label="EQ/Filter" value={`${data.filterHz} Hz`} />
+      <SummaryItem label="Reverb Send" value={`${data.reverbSendPct}% wet / ${data.dryPct}% dry`} />
+      <SummaryItem label="Occluded" value={data.occluded ? "Yes" : "No"} />
+    </>
+  );
+}
+
 function MixerPage() {
   const {
     tracks,
@@ -64,6 +239,8 @@ function MixerPage() {
     setShowAcousticShadows,
     setShowCriticalDistance,
     setTrackGainDb,
+    toggleTrackDirectivity,
+    setTrackRotationDeg,
   } = useTrackStore();
   const [view, setView] = useState<CameraView>("isometric");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -71,6 +248,10 @@ function MixerPage() {
   const [isBootReady, setIsBootReady] = useState(false);
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
   const [zoomSteps, setZoomSteps] = useState(0);
+  const [isNarrowScreen, setIsNarrowScreen] = useState(false);
+  const [summaryTrackId, setSummaryTrackId] = useState<string | null>(null);
+  const [expandedTrackIds, setExpandedTrackIds] = useState<Record<string, boolean>>({});
+  const [liveTrackData, setLiveTrackData] = useState<Record<string, TrackAcousticData>>({});
 
   useEffect(() => {
     const resumeAudioOnClick = () => {
@@ -84,6 +265,13 @@ function MixerPage() {
       window.removeEventListener("click", resumeAudioOnClick);
       disposeAudioEngine();
     };
+  }, []);
+
+  useEffect(() => {
+    const updateScreen = () => setIsNarrowScreen(window.innerWidth <= 900);
+    updateScreen();
+    window.addEventListener("resize", updateScreen);
+    return () => window.removeEventListener("resize", updateScreen);
   }, []);
 
   useEffect(() => {
@@ -117,6 +305,7 @@ function MixerPage() {
       true
     ) {
       resolvedAssets = true;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- boot phase mirrors loader completion
       setLoadingProgress(100);
     }
 
@@ -152,6 +341,22 @@ function MixerPage() {
     const playing = await toggleTransport();
     setIsPlaying(playing);
   };
+
+  useEffect(() => {
+    const refresh = () => {
+      const next: Record<string, TrackAcousticData> = {};
+      for (const track of tracks) {
+        const data = getTrackAcousticData(track.id);
+        if (data) next[track.id] = data;
+      }
+      setLiveTrackData(next);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 150);
+    return () => window.clearInterval(timer);
+  }, [tracks]);
+
+  const summaryData = summaryTrackId ? (liveTrackData[summaryTrackId] ?? null) : null;
 
   const sidebarContent = (
     <>
@@ -204,7 +409,10 @@ function MixerPage() {
         </div>
 
         <div className={styles.row}>
-          <span className={styles.rowLabel}>Air absorption</span>
+          <span className={styles.rowLabelWithHelp}>
+            <span className={styles.rowLabel}>Air absorption</span>
+            <HelpTooltip text="Simulates how high frequencies fade faster than lows in large rooms. Turning this on makes distant sources sound darker and more realistic." />
+          </span>
           <button
             type="button"
             className={`${styles.toggle} ${acousticSettings.enableAirAbsorption ? styles.toggleOn : ""}`}
@@ -244,7 +452,10 @@ function MixerPage() {
         </div>
 
         <div className={styles.row}>
-          <span className={styles.rowLabel}>Show attenuation zones</span>
+          <span className={styles.rowLabelWithHelp}>
+            <span className={styles.rowLabel}>Show attenuation zones</span>
+            <HelpTooltip text="Visualizes how sound volume drops over distance. Use this to ensure the back of the club is not too quiet compared to the front." />
+          </span>
           <button
             type="button"
             className={`${styles.toggle} ${acousticSettings.showAttenuationZones ? styles.toggleOn : ""}`}
@@ -270,7 +481,10 @@ function MixerPage() {
         </div>
 
         <div className={styles.row}>
-          <span className={styles.rowLabel}>Show critical distance</span>
+          <span className={styles.rowLabelWithHelp}>
+            <span className={styles.rowLabel}>Show critical distance</span>
+            <HelpTooltip text="The point where room echoes become as loud as the direct sound. Beyond this circle, the music loses clarity and becomes muddy." />
+          </span>
           <button
             type="button"
             className={`${styles.toggle} ${acousticSettings.showCriticalDistance ? styles.toggleOn : ""}`}
@@ -281,6 +495,7 @@ function MixerPage() {
             {acousticSettings.showCriticalDistance ? "on" : "off"}
           </button>
         </div>
+
       </section>
 
       <section className={styles.section}>
@@ -306,6 +521,24 @@ function MixerPage() {
                   value={track.name}
                   onChange={(e) => updateTrackName(track.id, e.target.value)}
                 />
+                <button
+                  type="button"
+                  className={styles.summaryBtn}
+                  onClick={() => {
+                    if (isNarrowScreen) {
+                      setExpandedTrackIds((current) => ({
+                        ...current,
+                        [track.id]: !current[track.id],
+                      }));
+                      return;
+                    }
+                    setSummaryTrackId(track.id);
+                  }}
+                  aria-label={`Open settings summary for ${track.name}`}
+                  title={isNarrowScreen ? "Details" : "Settings Summary"}
+                >
+                  i
+                </button>
                 <button
                   type="button"
                   className={`${styles.circleBtn} ${track.muted ? styles.circleBtnOn : ""}`}
@@ -343,6 +576,68 @@ function MixerPage() {
                   formatValue={(v) => (v <= -60 ? "-inf dB" : `${v >= 0 ? "+" : ""}${v} dB`)}
                 />
               </div>
+              <div className={styles.trackDirectivityRow}>
+                <span className={styles.trackDirectivityLabel}>direction</span>
+                <button
+                  type="button"
+                  className={`${styles.toggle} ${track.isDirectivityEnabled ? styles.toggleOn : ""}`}
+                  onClick={() => toggleTrackDirectivity(track.id)}
+                  aria-label={`Toggle directivity for ${track.name}`}
+                  title="Direction on/off"
+                >
+                  {track.isDirectivityEnabled ? "on" : "off"}
+                </button>
+              </div>
+              {track.isDirectivityEnabled ? (
+                <div className={styles.trackRotationRow}>
+                  <RotationDial
+                    value={track.rotationDeg}
+                    onChange={(v) => setTrackRotationDeg(track.id, v)}
+                  />
+                </div>
+              ) : null}
+              {isNarrowScreen && expandedTrackIds[track.id] ? (
+                <div className={styles.mobileDetails}>
+                  {liveTrackData[track.id] ? (
+                    <>
+                      <div className={styles.mobileDetailCell}>
+                        <span className={styles.mobileDetailKey}>Gain</span>
+                        <span className={styles.mobileDetailValue}>
+                          {Number.isFinite(liveTrackData[track.id].gainDb)
+                            ? `${liveTrackData[track.id].gainDb.toFixed(1)} dB`
+                            : "-inf dB"}
+                        </span>
+                      </div>
+                      <div className={styles.mobileDetailCell}>
+                        <span className={styles.mobileDetailKey}>Pan</span>
+                        <span className={styles.mobileDetailValue}>
+                          {liveTrackData[track.id].panningText}
+                        </span>
+                      </div>
+                      <div className={styles.mobileDetailCell}>
+                        <span className={styles.mobileDetailKey}>Filter</span>
+                        <span className={styles.mobileDetailValue}>
+                          {liveTrackData[track.id].filterHz} Hz
+                        </span>
+                      </div>
+                      <div className={styles.mobileDetailCell}>
+                        <span className={styles.mobileDetailKey}>Reverb</span>
+                        <span className={styles.mobileDetailValue}>
+                          {liveTrackData[track.id].reverbSendPct}% wet
+                        </span>
+                      </div>
+                      <div className={styles.mobileDetailCell}>
+                        <span className={styles.mobileDetailKey}>Occluded</span>
+                        <span className={styles.mobileDetailValue}>
+                          {liveTrackData[track.id].occluded ? "Yes" : "No"}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <span className={styles.mobileDetailKey}>No live data yet.</span>
+                  )}
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -448,6 +743,29 @@ function MixerPage() {
       <section className={styles.canvasWrap}>
         {isBootReady ? <SceneCanvas view={view} zoomSteps={zoomSteps} /> : null}
       </section>
+
+      {!isNarrowScreen ? (
+        <aside
+          className={`${styles.summaryDrawer} ${summaryTrackId ? styles.summaryDrawerOpen : ""}`}
+        >
+          <div className={styles.summaryHeader}>
+            <h3 className={styles.summaryTitle}>Settings Summary</h3>
+            <button
+              type="button"
+              className={styles.summaryClose}
+              onClick={() => setSummaryTrackId(null)}
+              aria-label="Close settings summary"
+            >
+              ×
+            </button>
+          </div>
+          {summaryTrackId && summaryData ? (
+            <div className={styles.summaryBody}>{renderSummaryRows(summaryData)}</div>
+          ) : (
+            <p className={styles.summaryEmpty}>Pick a track via the info button.</p>
+          )}
+        </aside>
+      ) : null}
 
       <div className={styles.zoomControls}>
         <button

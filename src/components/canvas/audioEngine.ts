@@ -10,6 +10,16 @@ type ResonanceSceneLike = {
   createSource: () => {
     input: AudioNode;
     setPosition: (x: number, y: number, z: number) => void;
+    setOrientation?: (
+      fx: number,
+      fy: number,
+      fz: number,
+      ux: number,
+      uy: number,
+      uz: number
+    ) => void;
+    setDirectivityPattern?: (alpha: number, sharpness: number) => void;
+    setDirectivity?: (alpha: number, sharpness: number) => void;
   };
   setListenerPosition: (x: number, y: number, z: number) => void;
   setListenerOrientation: (
@@ -68,7 +78,12 @@ const trackIds = new Set<string>();
 const sources = new Map<string, ResonanceSource>();
 const players = new Map<string, Tone.Player>();
 const trackNodes = new Map<string, TrackNodeBundle>();
+const trackPositions = new Map<string, [number, number, number]>();
 const trackMixState = new Map<string, { muted: boolean; solo: boolean }>();
+const trackDirectivityState = new Map<
+  string,
+  { enabled: boolean; fx: number; fy: number; fz: number }
+>();
 let isPlaying = false;
 let airAbsorptionEnabled = false;
 let globalPlaybackStartTime = 0;
@@ -76,6 +91,8 @@ let globalPlaybackStartTime = 0;
 const forwardVector = new Vector3();
 const upVector = new Vector3();
 const sourceDirection = new Vector3();
+const listenerForwardXZ = new Vector3();
+const sourceDirectionXZ = new Vector3();
 
 /** Educational acoustic-shadow low-pass (bypassed when false). */
 let educationalShadowsEnabled = false;
@@ -97,9 +114,23 @@ export type RoomAcousticsResult = {
   materialAlpha: number;
 };
 
+export type TrackAcousticData = {
+  gainDb: number;
+  panningText: string;
+  filterHz: number;
+  reverbSendPct: number;
+  dryPct: number;
+  occluded: boolean;
+};
+
 function gainDbToLinear(gainDb: number) {
   if (!Number.isFinite(gainDb)) return 0;
   return Math.pow(10, gainDb / 20);
+}
+
+function linearToGainDb(value: number) {
+  if (!Number.isFinite(value) || value <= 0.0001) return -Infinity;
+  return 20 * Math.log10(value);
 }
 
 function getEngineState() {
@@ -353,6 +384,8 @@ function pruneTracks(validIds: string[]) {
     nodes?.occlusionFilter.disconnect();
     nodes?.shadowFilter.disconnect();
     shadowOcclusionState.delete(id);
+    trackDirectivityState.delete(id);
+    trackPositions.delete(id);
     players.delete(id);
     sources.delete(id);
     trackNodes.delete(id);
@@ -367,6 +400,7 @@ function setTrackPosition(trackId: string, position: [number, number, number]) {
 
   const [x, y, z] = mapThreeToResonance(position);
   source.setPosition(x, y, z);
+  trackPositions.set(trackId, position);
 
   const dx = position[0] - listenerPosition.x;
   const dy = position[1] - listenerPosition.y;
@@ -378,7 +412,6 @@ function setTrackPosition(trackId: string, position: [number, number, number]) {
   nodes.distanceGain.gain.value = Math.min(1, rolloffFactor / distance);
 
   sourceDirection.set(dx, dy, dz).normalize();
-  const behind = listenerForward.dot(sourceDirection) < 0;
   const airCutoff = airAbsorptionEnabled
     ? Math.max(2000, 20000 * Math.pow(0.5, distance / 5))
     : 20000;
@@ -388,7 +421,26 @@ function setTrackPosition(trackId: string, position: [number, number, number]) {
     0.03
   );
   const baseCutoff = airAbsorptionEnabled ? airCutoff : 12000;
-  nodes.occlusionFilter.frequency.value = behind ? Math.min(baseCutoff, 5000) : baseCutoff;
+  // Use horizontal-plane angle for smooth front/side/back filtering.
+  listenerForwardXZ.set(listenerForward.x, 0, listenerForward.z);
+  sourceDirectionXZ.set(sourceDirection.x, 0, sourceDirection.z);
+  if (listenerForwardXZ.lengthSq() < 1e-6 || sourceDirectionXZ.lengthSq() < 1e-6) {
+    listenerForwardXZ.set(listenerForward.x, 0, listenerForward.z).normalize();
+    sourceDirectionXZ.set(sourceDirection.x, 0, sourceDirection.z).normalize();
+  } else {
+    listenerForwardXZ.normalize();
+    sourceDirectionXZ.normalize();
+  }
+  const dotXZ = Math.max(-1, Math.min(1, listenerForwardXZ.dot(sourceDirectionXZ)));
+  const frontBackFactor = (dotXZ + 1) / 2; // 1 = in front, 0 = behind
+  const minBehindCutoff = Math.min(baseCutoff, 1600);
+  const targetOcclusionCutoff =
+    minBehindCutoff + frontBackFactor * (baseCutoff - minBehindCutoff);
+  nodes.occlusionFilter.frequency.setTargetAtTime(
+    targetOcclusionCutoff,
+    getEngineState().audioContext.currentTime,
+    0.05
+  );
   nodes.occlusionFilter.Q.value = 0.7;
 
   const roomHalfWidth = getEngineState().roomDimensions.width / 2;
@@ -400,6 +452,100 @@ function setTrackPosition(trackId: string, position: [number, number, number]) {
   // Keep subtle near-wall boost in level to emulate early reflections cheaply.
   const wallBoost = nearWallDistance < 1 ? (1 - Math.max(0, nearWallDistance)) * 0.12 : 0;
   nodes.distanceGain.gain.value = Math.min(1, nodes.distanceGain.gain.value + wallBoost);
+}
+
+function getTrackAcousticData(trackId: string): TrackAcousticData | null {
+  if (!engineState) return null;
+  const nodes = trackNodes.get(trackId);
+  const position = trackPositions.get(trackId);
+  if (!nodes || !position) return null;
+
+  const [x, y, z] = position;
+  const listener = engineState.listenerPosition;
+  const dx = x - listener.x;
+  const dy = y - listener.y;
+  const dz = z - listener.z;
+  const distance = Math.max(0.001, Math.sqrt(dx * dx + dy * dy + dz * dz));
+  const roomHalfWidth = engineState.roomDimensions.width / 2;
+  const roomHalfDepth = engineState.roomDimensions.depth / 2;
+  const roomDiag = Math.sqrt(
+    engineState.roomDimensions.width * engineState.roomDimensions.width +
+      engineState.roomDimensions.depth * engineState.roomDimensions.depth
+  );
+
+  const panNorm = Math.max(-1, Math.min(1, x / Math.max(0.1, roomHalfWidth)));
+  const panAbs = Math.round(Math.abs(panNorm) * 100);
+  const panningText =
+    panAbs < 2 ? "C 0%" : panNorm < 0 ? `L ${panAbs}%` : `R ${panAbs}%`;
+
+  const nearWallDistance = Math.min(
+    roomHalfWidth - Math.abs(x),
+    roomHalfDepth - Math.abs(z)
+  );
+  const nearWallNorm = Math.max(0, Math.min(1, 1 - nearWallDistance / 2));
+  const distanceNorm = Math.max(0, Math.min(1, distance / Math.max(1, roomDiag * 0.7)));
+  const wet = Math.max(0, Math.min(1, 0.15 + distanceNorm * 0.55 + nearWallNorm * 0.3));
+  const dry = 1 - wet;
+  const clarity = shadowOcclusionState.get(trackId) ?? 1;
+  const occlusionFactor = Math.max(0, Math.min(1, 1 - clarity));
+  // Use the real live DSP state from node frequencies.
+  const computedFilter = Math.max(
+    120,
+    Math.min(
+      nodes.airFilter.frequency.value,
+      nodes.occlusionFilter.frequency.value,
+      nodes.shadowFilter.frequency.value
+    )
+  );
+
+  return {
+    gainDb: linearToGainDb(nodes.uiGain.gain.value),
+    panningText,
+    filterHz: Math.round(computedFilter),
+    reverbSendPct: Math.round(wet * 100),
+    dryPct: Math.round(dry * 100),
+    occluded: occlusionFactor > 0.12,
+  };
+}
+
+function setTrackDirectivityState(
+  trackId: string,
+  forward: [number, number, number],
+  enabled: boolean
+) {
+  if (!engineState) return;
+  const source = sources.get(trackId);
+  if (!source) return;
+
+  const fx = forward[0];
+  const fy = forward[1];
+  const fz = -forward[2];
+  const norm = Math.hypot(fx, fy, fz);
+  const safeFx = norm > 1e-5 ? fx / norm : 0;
+  const safeFy = norm > 1e-5 ? fy / norm : 0;
+  const safeFz = norm > 1e-5 ? fz / norm : -1;
+
+  const prev = trackDirectivityState.get(trackId);
+  const changed =
+    !prev ||
+    prev.enabled !== enabled ||
+    Math.abs(prev.fx - safeFx) > 0.005 ||
+    Math.abs(prev.fy - safeFy) > 0.005 ||
+    Math.abs(prev.fz - safeFz) > 0.005;
+  if (!changed) return;
+
+  source.setOrientation?.(safeFx, safeFy, safeFz, 0, 1, 0);
+  const alpha = enabled ? 0.5 : 0;
+  const sharpness = 1.0;
+  source.setDirectivityPattern?.(alpha, sharpness);
+  source.setDirectivity?.(alpha, sharpness);
+
+  trackDirectivityState.set(trackId, {
+    enabled,
+    fx: safeFx,
+    fy: safeFy,
+    fz: safeFz,
+  });
 }
 
 function updateRoomAcoustics(
@@ -608,8 +754,10 @@ function disposeAudioEngine() {
   sources.clear();
   trackIds.clear();
   trackNodes.clear();
+  trackPositions.clear();
   trackMixState.clear();
   shadowOcclusionState.clear();
+  trackDirectivityState.clear();
   airAbsorptionEnabled = false;
   educationalShadowsEnabled = false;
   engineState = null;
@@ -697,6 +845,7 @@ export {
   pruneTracks,
   setListenerTransform,
   setTrackPosition,
+  setTrackDirectivityState,
   setTrackMixState,
   setTrackUiGainDb,
   toggleTransport,
@@ -710,6 +859,7 @@ export {
   getMaxTrackDurationSeconds,
   seekTransport,
   updateRoomAcoustics,
+  getTrackAcousticData,
   waitForToneLoaded,
   preloadTracks,
 };

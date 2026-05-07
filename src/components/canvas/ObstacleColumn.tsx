@@ -10,7 +10,7 @@ export function ObstacleColumn() {
   return (
     <mesh position={[OBSTACLE_CENTER.x, y, OBSTACLE_CENTER.z]}>
       <cylinderGeometry
-        args={[OBSTACLE_RADIUS, OBSTACLE_RADIUS, OBSTACLE_HEIGHT, 20, 1]}
+        args={[OBSTACLE_RADIUS, OBSTACLE_RADIUS, OBSTACLE_HEIGHT, 40, 1]}
       />
       <meshBasicMaterial
         color={INK}

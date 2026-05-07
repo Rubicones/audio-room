@@ -37,6 +37,8 @@ type TrackStoreValue = {
   setShowAcousticShadows: (enabled: boolean) => void;
   setShowCriticalDistance: (enabled: boolean) => void;
   setTrackGainDb: (trackId: string, gainDb: number) => void;
+  toggleTrackDirectivity: (trackId: string) => void;
+  setTrackRotationDeg: (trackId: string, value: number) => void;
 };
 
 const TrackStoreContext = createContext<TrackStoreValue | null>(null);
@@ -49,7 +51,10 @@ function randomSpawnPosition(): Vec3 {
 }
 
 function createTrack(config: TrackConfig): Track {
-  const { gainDb: _g, ...rest } = config;
+  const { gainDb: _g, isDirectivityEnabled, rotationDeg, ...rest } = config;
+  const normalizedRotation = Number.isFinite(rotationDeg)
+    ? ((((Math.round(rotationDeg as number) % 360) + 360) % 360) as number)
+    : 0;
   return {
     ...rest,
     id: crypto.randomUUID(),
@@ -57,6 +62,8 @@ function createTrack(config: TrackConfig): Track {
     muted: false,
     solo: false,
     gainDb: Number.isFinite(config.gainDb) ? (config.gainDb as number) : 0,
+    isDirectivityEnabled: Boolean(isDirectivityEnabled),
+    rotationDeg: normalizedRotation,
   };
 }
 
@@ -146,6 +153,23 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
         setTracks((current) =>
           current.map((track) =>
             track.id === trackId ? { ...track, gainDb: normalized } : track
+          )
+        );
+      },
+      toggleTrackDirectivity: (trackId) => {
+        setTracks((current) =>
+          current.map((track) =>
+            track.id === trackId
+              ? { ...track, isDirectivityEnabled: !track.isDirectivityEnabled }
+              : track
+          )
+        );
+      },
+      setTrackRotationDeg: (trackId, value) => {
+        const normalized = ((Math.round(value) % 360) + 360) % 360;
+        setTracks((current) =>
+          current.map((track) =>
+            track.id === trackId ? { ...track, rotationDeg: normalized } : track
           )
         );
       },

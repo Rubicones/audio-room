@@ -10,6 +10,7 @@ import {
   setAirAbsorptionEnabled,
   setEducationalShadowEnabled,
   setListenerTransform,
+  setTrackDirectivityState,
   setTrackMixState,
   setTrackUiGainDb,
   setTrackPosition,
@@ -21,6 +22,7 @@ import { ObstacleColumn } from "./ObstacleColumn";
 import { Room } from "./Room";
 import { useTrackStore } from "./TrackStore";
 import { TrackNodes } from "./TrackNodes";
+import { getForwardDirectionFromRotationDeg } from "./directivity";
 
 type SceneContentsProps = {
   view: CameraView;
@@ -32,7 +34,12 @@ type SceneCanvasProps = {
   zoomSteps: number;
 };
 
-type TrackLite = { id: string; gainDb: number };
+type TrackLite = {
+  id: string;
+  gainDb: number;
+  isDirectivityEnabled: boolean;
+  rotationDeg: number;
+};
 
 type EduFlags = {
   attenuation: boolean;
@@ -60,6 +67,9 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
   const trackRefs = useRef<Map<string, Object3D>>(new Map());
   const tracksRef = useRef<TrackLite[]>([]);
   const gainDbMapRef = useRef<Map<string, number>>(new Map());
+  const directivityMapRef = useRef<
+    Map<string, { enabled: boolean; rotationDeg: number }>
+  >(new Map());
   const flagsRef = useRef<EduFlags>({
     attenuation: false,
     shadows: false,
@@ -75,9 +85,23 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
   const lastSyncRef = useRef(0);
 
   useLayoutEffect(() => {
-    tracksRef.current = tracks.map((t) => ({ id: t.id, gainDb: t.gainDb }));
+    tracksRef.current = tracks.map((t) => ({
+      id: t.id,
+      gainDb: t.gainDb,
+      isDirectivityEnabled: t.isDirectivityEnabled,
+      rotationDeg: t.rotationDeg,
+    }));
     gainDbMapRef.current = new Map(
       tracks.map((track) => [track.id, Number.isFinite(track.gainDb) ? track.gainDb : -Infinity])
+    );
+    directivityMapRef.current = new Map(
+      tracks.map((track) => [
+        track.id,
+        {
+          enabled: track.isDirectivityEnabled,
+          rotationDeg: track.rotationDeg,
+        },
+      ])
     );
   }, [tracks]);
 
@@ -147,11 +171,21 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
     }
 
     trackRefs.current.forEach((object, trackId) => {
+      object.getWorldPosition(worldPosition.current);
       setTrackPosition(trackId, [
-        object.position.x,
-        object.position.y,
-        object.position.z,
+        worldPosition.current.x,
+        worldPosition.current.y,
+        worldPosition.current.z,
       ]);
+      const directivity = directivityMapRef.current.get(trackId);
+      const direction = getForwardDirectionFromRotationDeg(
+        directivity?.rotationDeg ?? 0
+      );
+      setTrackDirectivityState(
+        trackId,
+        [direction.x, 0, direction.z],
+        directivity?.enabled ?? false
+      );
     });
   });
 
@@ -191,7 +225,12 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
       />
 
       <AcousticEducationViz
-        tracks={tracks.map((t) => ({ id: t.id, gainDb: t.gainDb }))}
+        tracks={tracks.map((t) => ({
+          id: t.id,
+          gainDb: t.gainDb,
+          isDirectivityEnabled: t.isDirectivityEnabled,
+          rotationDeg: t.rotationDeg,
+        }))}
         listenerRef={listenerRef}
         trackRefs={trackRefs}
         tracksRef={tracksRef}

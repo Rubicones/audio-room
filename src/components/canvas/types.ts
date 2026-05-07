@@ -6,6 +6,8 @@ export type TrackConfig = {
   audioUrl: string;
   /** dB offset for inverse-square zone visualization (0 = reference). */
   gainDb?: number;
+  isDirectivityEnabled?: boolean;
+  rotationDeg?: number;
 };
 
 export type Track = Omit<TrackConfig, "gainDb"> & {
@@ -14,4 +16,6 @@ export type Track = Omit<TrackConfig, "gainDb"> & {
   muted: boolean;
   solo: boolean;
   gainDb: number;
+  isDirectivityEnabled: boolean;
+  rotationDeg: number;
 };

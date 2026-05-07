@@ -11,6 +11,11 @@ import {
 } from "three";
 import type { Track } from "./types";
 import { useItimFontUrl } from "./sketch";
+import {
+  DIRECTIVITY_ARROW_FRONT_OFFSET,
+  DIRECTIVITY_ARROW_TIP_OFFSET,
+  getForwardDirectionFromRotationDeg,
+} from "./directivity";
 
 const INK = "#1a1a1a";
 const FLOOR_Y = 0.5;
@@ -104,6 +109,7 @@ function TrackNode({
   const fontUrl = useItimFontUrl();
   const [hovered, setHovered] = useState(false);
   const showLabel = hovered || isDragging;
+  const direction = getForwardDirectionFromRotationDeg(track.rotationDeg);
 
   return (
     <group ref={groupRef} position={track.position}>
@@ -169,6 +175,53 @@ function TrackNode({
         </Text>
       </Billboard>
 
+      {track.isDirectivityEnabled ? (
+        <group position={[0, 0.08, 0]}>
+          <Line
+            points={[
+              [
+                direction.x * DIRECTIVITY_ARROW_FRONT_OFFSET,
+                0,
+                direction.z * DIRECTIVITY_ARROW_FRONT_OFFSET,
+              ],
+              [
+                direction.x * DIRECTIVITY_ARROW_TIP_OFFSET,
+                0,
+                direction.z * DIRECTIVITY_ARROW_TIP_OFFSET,
+              ],
+            ]}
+            color={INK}
+            lineWidth={3.2}
+          />
+          <Line
+            points={[
+              [
+                direction.x * DIRECTIVITY_ARROW_TIP_OFFSET,
+                0,
+                direction.z * DIRECTIVITY_ARROW_TIP_OFFSET,
+              ],
+              [
+                direction.x * (DIRECTIVITY_ARROW_TIP_OFFSET - 0.14) - direction.z * 0.08,
+                0,
+                direction.z * (DIRECTIVITY_ARROW_TIP_OFFSET - 0.14) + direction.x * 0.08,
+              ],
+              [
+                direction.x * DIRECTIVITY_ARROW_TIP_OFFSET,
+                0,
+                direction.z * DIRECTIVITY_ARROW_TIP_OFFSET,
+              ],
+              [
+                direction.x * (DIRECTIVITY_ARROW_TIP_OFFSET - 0.14) + direction.z * 0.08,
+                0,
+                direction.z * (DIRECTIVITY_ARROW_TIP_OFFSET - 0.14) - direction.x * 0.08,
+              ],
+            ]}
+            color={INK}
+            lineWidth={3.2}
+          />
+        </group>
+      ) : null}
+
       {showLabel ? (
         <Billboard position={[0, 1.0, 0]}>
           <Text
@@ -211,7 +264,7 @@ export function TrackNodes({
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
   const trackGroups = useRef<Map<string, Group>>(new Map());
   const draggingTrackIdRef = useRef<string | null>(null);
-  const listenerPos = useRef(new Vector3(0, FLOOR_Y, 0));
+  const listenerPos = useMemo(() => new Vector3(0, FLOOR_Y, 0), []);
 
   const updateDragFromEvent = (
     event: ThreeEvent<PointerEvent>,
@@ -234,7 +287,6 @@ export function TrackNodes({
     ]);
   };
 
-  const activeDragId = draggingTrackIdRef.current;
   const dragPlaneWidth = 10 * roomScale[0];
   const dragPlaneDepth = 10 * roomScale[2];
 
@@ -243,7 +295,7 @@ export function TrackNodes({
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, FLOOR_Y + 0.002, 0]}
-        visible={activeDragId !== null}
+        visible={draggingTrackId !== null}
         onPointerMove={(event) => {
           const trackId = draggingTrackIdRef.current;
           if (!trackId) return;
@@ -282,7 +334,7 @@ export function TrackNodes({
           key={track.id}
           track={track}
           index={index}
-          listenerPos={listenerPos.current}
+          listenerPos={listenerPos}
           isDragging={draggingTrackId === track.id}
           groupRef={(group) => {
             onTrackRef(track.id, group ?? null);
