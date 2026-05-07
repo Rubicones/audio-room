@@ -1,4 +1,4 @@
-import { Billboard, Line, Text } from "@react-three/drei";
+import { Billboard, Line, Text, useTexture } from "@react-three/drei";
 import { useMemo, useRef, useState } from "react";
 import { type ThreeEvent } from "@react-three/fiber";
 import {
@@ -57,132 +57,19 @@ type TrackNodesProps = {
 };
 
 function ListenerHeadphones() {
-  const archPoints = useMemo(() => {
-    const pts: [number, number, number][] = [];
-    const segments = 40;
-    const radius = 0.4;
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const angle = Math.PI * (1 - t);
-      pts.push([
-        Math.cos(angle) * radius,
-        0.06 + Math.sin(angle) * radius * 0.95,
-        0,
-      ]);
-    }
-    return pts;
-  }, []);
-
-  const cupPoints = (sign: 1 | -1) => {
-    const w = 0.18;
-    const h = 0.32;
-    const r = 0.08;
-    const cx = sign * 0.4;
-    const cy = -0.06;
-    return [
-      [cx - w / 2 + r, cy - h / 2, 0],
-      [cx + w / 2 - r, cy - h / 2, 0],
-      [cx + w / 2, cy - h / 2 + r, 0],
-      [cx + w / 2, cy + h / 2 - r, 0],
-      [cx + w / 2 - r, cy + h / 2, 0],
-      [cx - w / 2 + r, cy + h / 2, 0],
-      [cx - w / 2, cy + h / 2 - r, 0],
-      [cx - w / 2, cy - h / 2 + r, 0],
-      [cx - w / 2 + r, cy - h / 2, 0],
-    ] as [number, number, number][];
-  };
+  const iconTexture = useTexture("/headphones.svg");
 
   return (
     <Billboard>
-      <Line points={archPoints} color={INK} lineWidth={3.2} />
-      <Line points={cupPoints(-1)} color={INK} lineWidth={3} />
-      <Line points={cupPoints(1)} color={INK} lineWidth={3} />
-      <Line
-        points={[
-          [-0.48, -0.02, 0],
-          [-0.32, -0.02, 0],
-        ]}
-        color={INK}
-        lineWidth={2.5}
-      />
-      <Line
-        points={[
-          [0.32, -0.02, 0],
-          [0.48, -0.02, 0],
-        ]}
-        color={INK}
-        lineWidth={2.5}
-      />
+      <mesh position={[0, 0.02, 0]}>
+        <planeGeometry args={[0.92, 0.9]} />
+        <meshBasicMaterial
+          map={iconTexture}
+          transparent
+          toneMapped={false}
+        />
+      </mesh>
     </Billboard>
-  );
-}
-
-function OrientationCross({
-  position,
-}: {
-  position: [number, number, number];
-}) {
-  const len = 0.42;
-  const fontUrl = useItimFontUrl();
-  return (
-    <group position={position} rotation={[-Math.PI / 2, 0, 0]}>
-      <Line
-        points={[
-          [-len, 0, 0],
-          [len, 0, 0],
-        ]}
-        color={INK}
-        lineWidth={1.5}
-      />
-      <Line
-        points={[
-          [0, -len, 0],
-          [0, len, 0],
-        ]}
-        color={INK}
-        lineWidth={1.5}
-      />
-      <Text
-        position={[-len - 0.12, 0, 0]}
-        fontSize={0.16}
-        color={INK}
-        anchorX="center"
-        anchorY="middle"
-        font={fontUrl}
-      >
-        L
-      </Text>
-      <Text
-        position={[len + 0.12, 0, 0]}
-        fontSize={0.16}
-        color={INK}
-        anchorX="center"
-        anchorY="middle"
-        font={fontUrl}
-      >
-        R
-      </Text>
-      <Text
-        position={[0, len + 0.12, 0]}
-        fontSize={0.16}
-        color={INK}
-        anchorX="center"
-        anchorY="middle"
-        font={fontUrl}
-      >
-        F
-      </Text>
-      <Text
-        position={[0, -len - 0.12, 0]}
-        fontSize={0.16}
-        color={INK}
-        anchorX="center"
-        anchorY="middle"
-        font={fontUrl}
-      >
-        B
-      </Text>
-    </group>
   );
 }
 
@@ -388,7 +275,6 @@ export function TrackNodes({
         position={[0, FLOOR_Y, 0]}
       >
         <ListenerHeadphones />
-        <OrientationCross position={[0, -0.48, 0]} />
       </group>
 
       {tracks.map((track, index) => (
