@@ -1,44 +1,101 @@
 "use client";
 
-import { Grid, Line } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Mesh, PCFShadowMap, Quaternion, Vector3 } from "three";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import { NoToneMapping, Object3D, Quaternion, Vector3 } from "three";
+import { AcousticEducationViz } from "./AcousticEducationViz";
 import {
   ensureTrackAudio,
-  isAudioPlaying,
-  isTrackAudible,
   pruneTracks,
   setAirAbsorptionEnabled,
+  setEducationalShadowEnabled,
   setListenerTransform,
   setTrackMixState,
+  setTrackUiGainDb,
   setTrackPosition,
   updateRoomAcoustics,
 } from "./audioEngine";
 import { CameraRig, CameraView } from "./CameraRig";
+import { DimensionLines } from "./DimensionLines";
+import { ObstacleColumn } from "./ObstacleColumn";
 import { Room } from "./Room";
 import { useTrackStore } from "./TrackStore";
 import { TrackNodes } from "./TrackNodes";
 
 type SceneContentsProps = {
   view: CameraView;
+  zoomSteps: number;
 };
 
 type SceneCanvasProps = {
   view: CameraView;
+  zoomSteps: number;
 };
 
-function SceneContents({ view }: SceneContentsProps) {
-  const { tracks, roomScale, acousticSettings, setRt60Ms, updateTrackPosition } = useTrackStore();
+type TrackLite = { id: string; gainDb: number };
+
+type EduFlags = {
+  attenuation: boolean;
+  shadows: boolean;
+  critical: boolean;
+};
+
+type RoomDims = {
+  rt60Sec: number;
+  width: number;
+  height: number;
+  depth: number;
+  materialAlpha: number;
+};
+
+function SceneContents({ view, zoomSteps }: SceneContentsProps) {
+  const { tracks, roomScale, acousticSettings, setRt60Ms, updateTrackPosition } =
+    useTrackStore();
   const worldPosition = useRef(new Vector3());
   const worldQuaternion = useRef(new Quaternion());
   const worldForward = useRef(new Vector3(0, 0, -1));
   const worldUp = useRef(new Vector3(0, 1, 0));
 
-  const listenerRef = useRef<Mesh | null>(null);
-  const trackRefs = useRef<Map<string, Mesh>>(new Map());
+  const listenerRef = useRef<Object3D | null>(null);
+  const trackRefs = useRef<Map<string, Object3D>>(new Map());
+  const tracksRef = useRef<TrackLite[]>([]);
+  const gainDbMapRef = useRef<Map<string, number>>(new Map());
+  const flagsRef = useRef<EduFlags>({
+    attenuation: false,
+    shadows: false,
+    critical: false,
+  });
+  const roomRef = useRef<RoomDims>({
+    rt60Sec: 0.85,
+    width: 10,
+    height: 4,
+    depth: 10,
+    materialAlpha: 0.3,
+  });
   const lastSyncRef = useRef(0);
-  const [frameTick, setFrameTick] = useState(0);
+
+  useLayoutEffect(() => {
+    tracksRef.current = tracks.map((t) => ({ id: t.id, gainDb: t.gainDb }));
+    gainDbMapRef.current = new Map(
+      tracks.map((track) => [track.id, Number.isFinite(track.gainDb) ? track.gainDb : -Infinity])
+    );
+  }, [tracks]);
+
+  useLayoutEffect(() => {
+    flagsRef.current = {
+      attenuation: acousticSettings.showAttenuationZones,
+      shadows: acousticSettings.showAcousticShadows,
+      critical: acousticSettings.showCriticalDistance,
+    };
+  }, [
+    acousticSettings.showAttenuationZones,
+    acousticSettings.showAcousticShadows,
+    acousticSettings.showCriticalDistance,
+  ]);
+
+  useEffect(() => {
+    setEducationalShadowEnabled(acousticSettings.showAcousticShadows);
+  }, [acousticSettings.showAcousticShadows]);
 
   useEffect(() => {
     pruneTracks(tracks.map((track) => track.id));
@@ -47,16 +104,25 @@ function SceneContents({ view }: SceneContentsProps) {
     for (const track of tracks) {
       if (!track.audioUrl) continue;
       void ensureTrackAudio(track);
+      setTrackUiGainDb(track.id, track.gainDb);
     }
   }, [tracks, acousticSettings.enableAirAbsorption]);
 
   useEffect(() => {
-    const rt60Ms = updateRoomAcoustics(
+    const result = updateRoomAcoustics(
       roomScale,
       acousticSettings.roomMaterial,
       acousticSettings.enableRoomReverb
     );
-    setRt60Ms(rt60Ms);
+    setRt60Ms(result.rt60Ms);
+    roomRef.current = {
+      rt60Sec: result.rt60Sec,
+      width: result.width,
+      height: result.height,
+      depth: result.depth,
+      materialAlpha: result.materialAlpha,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync only on room / material inputs
   }, [roomScale, acousticSettings.roomMaterial, acousticSettings.enableRoomReverb]);
 
   useFrame(() => {
@@ -68,7 +134,10 @@ function SceneContents({ view }: SceneContentsProps) {
       const listener = listenerRef.current;
       listener.getWorldPosition(worldPosition.current);
       listener.getWorldQuaternion(worldQuaternion.current);
-      worldForward.current.set(0, 0, -1).applyQuaternion(worldQuaternion.current).normalize();
+      worldForward.current
+        .set(0, 0, -1)
+        .applyQuaternion(worldQuaternion.current)
+        .normalize();
       worldUp.current.set(0, 1, 0).applyQuaternion(worldQuaternion.current).normalize();
       setListenerTransform(
         [worldPosition.current.x, worldPosition.current.y, worldPosition.current.z],
@@ -77,152 +146,82 @@ function SceneContents({ view }: SceneContentsProps) {
       );
     }
 
-    trackRefs.current.forEach((mesh, trackId) => {
-      setTrackPosition(trackId, [mesh.position.x, mesh.position.y, mesh.position.z]);
+    trackRefs.current.forEach((object, trackId) => {
+      setTrackPosition(trackId, [
+        object.position.x,
+        object.position.y,
+        object.position.z,
+      ]);
     });
-
-    if (acousticSettings.showSoundRays) {
-      setFrameTick((value) => (value + 1) % 100000);
-    }
   });
 
-  const onTrackDragCommit = (trackId: string, position: [number, number, number]) => {
+  const onTrackDragCommit = (
+    trackId: string,
+    position: [number, number, number]
+  ) => {
     updateTrackPosition(trackId, position);
   };
 
-  const handleTrackRef = (trackId: string, mesh: Mesh | null) => {
-    if (!mesh) {
+  const handleTrackRef = (trackId: string, object: Object3D | null) => {
+    if (!object) {
       trackRefs.current.delete(trackId);
       return;
     }
-    trackRefs.current.set(trackId, mesh);
+    trackRefs.current.set(trackId, object);
   };
-
-  const rays = useMemo(() => {
-    if (
-      !acousticSettings.showSoundRays ||
-      !acousticSettings.enableRoomReverb ||
-      !listenerRef.current ||
-      !isAudioPlaying()
-    )
-      return [];
-
-    const listener = listenerRef.current.position;
-    const roomHalfW = (10 * roomScale[0]) / 2;
-    const roomHalfD = (10 * roomScale[2]) / 2;
-    return tracks.flatMap((track) => {
-      if (!isTrackAudible(track.id)) return [];
-      const mesh = trackRefs.current.get(track.id);
-      if (!mesh) return [];
-      const source = mesh.position.clone();
-      const listenerPos = listener.clone();
-      const candidates = [
-        { point: new Vector3(-roomHalfW, source.y, source.z), normal: new Vector3(1, 0, 0) },
-        { point: new Vector3(roomHalfW, source.y, source.z), normal: new Vector3(-1, 0, 0) },
-        { point: new Vector3(source.x, source.y, -roomHalfD), normal: new Vector3(0, 0, 1) },
-        { point: new Vector3(source.x, source.y, roomHalfD), normal: new Vector3(0, 0, -1) },
-      ];
-      let bestWallPoint: Vector3 | null = null;
-      let bestDistance = Number.POSITIVE_INFINITY;
-      for (const candidate of candidates) {
-        const mirroredListener = listenerPos
-          .clone()
-          .sub(candidate.point)
-          .reflect(candidate.normal)
-          .add(candidate.point);
-        const pathDirection = mirroredListener.clone().sub(source).normalize();
-        const denom = pathDirection.dot(candidate.normal);
-        if (Math.abs(denom) < 1e-4) continue;
-        const t = candidate.point.clone().sub(source).dot(candidate.normal) / denom;
-        if (t <= 0) continue;
-        const wallPoint = source.clone().add(pathDirection.multiplyScalar(t));
-        if (Math.abs(wallPoint.x) > roomHalfW + 0.01 || Math.abs(wallPoint.z) > roomHalfD + 0.01) {
-          continue;
-        }
-        const totalDistance =
-          source.distanceTo(wallPoint) + wallPoint.distanceTo(listenerPos);
-        if (totalDistance < bestDistance) {
-          bestDistance = totalDistance;
-          bestWallPoint = wallPoint;
-        }
-      }
-      if (!bestWallPoint) return [];
-      return [
-        { key: `${track.id}-source-wall`, points: [source.toArray(), bestWallPoint.toArray()], color: track.color },
-        { key: `${track.id}-wall-listener`, points: [bestWallPoint.toArray(), listenerPos.toArray()], color: track.color },
-      ];
-    });
-  }, [tracks, roomScale, acousticSettings.showSoundRays, acousticSettings.enableRoomReverb, frameTick]);
 
   return (
     <>
-      <CameraRig view={view} />
-
-      <ambientLight intensity={0.5} />
-      <directionalLight
-        intensity={1}
-        position={[5, 10, 5]}
-        castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
-        shadow-radius={4}
-        shadow-bias={-0.0001}
-      />
+      <CameraRig view={view} zoomSteps={zoomSteps} />
 
       <Room scale={roomScale} materialPreset={acousticSettings.roomMaterial} />
 
-      <Grid
-        position={[0, 0.01, 0]}
-        args={[10, 10]}
-        cellSize={1}
-        cellThickness={0.15}
-        sectionSize={5}
-        sectionThickness={0.25}
-        cellColor="#E6E8EE"
-        sectionColor="#DBDFE8"
-        fadeDistance={18}
-        fadeStrength={2}
-        infiniteGrid={false}
-      />
+      <DimensionLines scale={roomScale} />
 
-      {acousticSettings.showSoundRays
-        ? rays.map((ray) => (
-            <Line
-              key={ray.key}
-              points={ray.points}
-              color={ray.color}
-              transparent
-              opacity={0.16}
-              lineWidth={1}
-            />
-          ))
-        : null}
+      {acousticSettings.showAcousticShadows ? <ObstacleColumn /> : null}
 
       <TrackNodes
         tracks={tracks}
         roomScale={roomScale}
         onTrackDragCommit={onTrackDragCommit}
-        onListenerRef={(mesh) => {
-          listenerRef.current = mesh;
+        onListenerRef={(object) => {
+          listenerRef.current = object;
         }}
         onTrackRef={handleTrackRef}
+      />
+
+      <AcousticEducationViz
+        tracks={tracks.map((t) => ({ id: t.id, gainDb: t.gainDb }))}
+        listenerRef={listenerRef}
+        trackRefs={trackRefs}
+        tracksRef={tracksRef}
+        gainDbMapRef={gainDbMapRef}
+        flagsRef={flagsRef}
+        roomRef={roomRef}
+        showAttenuation={acousticSettings.showAttenuationZones}
+        showShadows={acousticSettings.showAcousticShadows}
+        showCritical={acousticSettings.showCriticalDistance}
       />
     </>
   );
 }
 
-export function SceneCanvas({ view }: SceneCanvasProps) {
+export function SceneCanvas({ view, zoomSteps }: SceneCanvasProps) {
   return (
     <Canvas
-      gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
-      shadows
+      flat
+      gl={{
+        antialias: true,
+        alpha: true,
+        powerPreference: "high-performance",
+        toneMapping: NoToneMapping,
+      }}
       onCreated={({ gl }) => {
-        gl.shadowMap.enabled = true;
-        gl.shadowMap.type = PCFShadowMap;
+        gl.toneMapping = NoToneMapping;
+        gl.setClearColor(0x000000, 0);
       }}
     >
-      <color attach="background" args={["#f7f7f9"]} />
-      <SceneContents view={view} />
+      <SceneContents view={view} zoomSteps={zoomSteps} />
     </Canvas>
   );
 }

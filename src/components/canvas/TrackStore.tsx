@@ -10,9 +10,11 @@ export type RoomMaterialPreset = "brick" | "wood" | "acoustic-foam" | "marble";
 type AcousticSettings = {
   roomMaterial: RoomMaterialPreset;
   enableRoomReverb: boolean;
-  showSoundRays: boolean;
   enableAirAbsorption: boolean;
   rt60Ms: number;
+  showAttenuationZones: boolean;
+  showAcousticShadows: boolean;
+  showCriticalDistance: boolean;
 };
 
 type TrackStoreValue = {
@@ -20,6 +22,7 @@ type TrackStoreValue = {
   roomScale: RoomScale;
   acousticSettings: AcousticSettings;
   addTracks: (configs: TrackConfig[]) => void;
+  removeTrack: (trackId: string) => void;
   updateTrackPosition: (trackId: string, position: Vec3) => void;
   updateTrackName: (trackId: string, name: string) => void;
   updateTrackColor: (trackId: string, color: string) => void;
@@ -28,9 +31,12 @@ type TrackStoreValue = {
   setRoomScale: (scale: RoomScale) => void;
   setRoomMaterial: (preset: RoomMaterialPreset) => void;
   setEnableRoomReverb: (enabled: boolean) => void;
-  setShowSoundRays: (enabled: boolean) => void;
   setEnableAirAbsorption: (enabled: boolean) => void;
   setRt60Ms: (value: number) => void;
+  setShowAttenuationZones: (enabled: boolean) => void;
+  setShowAcousticShadows: (enabled: boolean) => void;
+  setShowCriticalDistance: (enabled: boolean) => void;
+  setTrackGainDb: (trackId: string, gainDb: number) => void;
 };
 
 const TrackStoreContext = createContext<TrackStoreValue | null>(null);
@@ -43,12 +49,14 @@ function randomSpawnPosition(): Vec3 {
 }
 
 function createTrack(config: TrackConfig): Track {
+  const { gainDb: _g, ...rest } = config;
   return {
-    ...config,
+    ...rest,
     id: crypto.randomUUID(),
     position: randomSpawnPosition(),
     muted: false,
     solo: false,
+    gainDb: Number.isFinite(config.gainDb) ? (config.gainDb as number) : 0,
   };
 }
 
@@ -58,9 +66,11 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
   const [acousticSettings, setAcousticSettings] = useState<AcousticSettings>({
     roomMaterial: "brick",
     enableRoomReverb: true,
-    showSoundRays: false,
     enableAirAbsorption: false,
     rt60Ms: 850,
+    showAttenuationZones: false,
+    showAcousticShadows: false,
+    showCriticalDistance: false,
   });
 
   const value = useMemo<TrackStoreValue>(
@@ -73,6 +83,9 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
           ...current,
           ...configs.map((config) => createTrack(config)),
         ]);
+      },
+      removeTrack: (trackId) => {
+        setTracks((current) => current.filter((track) => track.id !== trackId));
       },
       updateTrackPosition: (trackId, position) => {
         setTracks((current) =>
@@ -110,14 +123,31 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
       setEnableRoomReverb: (enabled) => {
         setAcousticSettings((current) => ({ ...current, enableRoomReverb: enabled }));
       },
-      setShowSoundRays: (enabled) => {
-        setAcousticSettings((current) => ({ ...current, showSoundRays: enabled }));
-      },
       setEnableAirAbsorption: (enabled) => {
         setAcousticSettings((current) => ({ ...current, enableAirAbsorption: enabled }));
       },
       setRt60Ms: (value) => {
         setAcousticSettings((current) => ({ ...current, rt60Ms: value }));
+      },
+      setShowAttenuationZones: (enabled) => {
+        setAcousticSettings((current) => ({ ...current, showAttenuationZones: enabled }));
+      },
+      setShowAcousticShadows: (enabled) => {
+        setAcousticSettings((current) => ({ ...current, showAcousticShadows: enabled }));
+      },
+      setShowCriticalDistance: (enabled) => {
+        setAcousticSettings((current) => ({ ...current, showCriticalDistance: enabled }));
+      },
+      setTrackGainDb: (trackId, gainDb) => {
+        const normalized =
+          gainDb <= -60 || !Number.isFinite(gainDb)
+            ? -Infinity
+            : Math.max(-59, Math.min(12, gainDb));
+        setTracks((current) =>
+          current.map((track) =>
+            track.id === trackId ? { ...track, gainDb: normalized } : track
+          )
+        );
       },
     }),
     [tracks, roomScale, acousticSettings]

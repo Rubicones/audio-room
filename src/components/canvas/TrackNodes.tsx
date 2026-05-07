@@ -1,28 +1,24 @@
+import { Billboard, Line, Text } from "@react-three/drei";
 import { useMemo, useRef, useState } from "react";
-import { ThreeEvent } from "@react-three/fiber";
+import { type ThreeEvent } from "@react-three/fiber";
 import {
-  BoxGeometry,
-  Color,
-  Mesh,
-  MeshBasicMaterial,
+  CircleGeometry,
+  Group,
+  Object3D,
   Plane,
   RingGeometry,
-  SphereGeometry,
   Vector3,
 } from "three";
 import type { Track } from "./types";
+import { useItimFontUrl } from "./sketch";
 
+const INK = "#1a1a1a";
 const FLOOR_Y = 0.5;
-const LISTENER_GEOMETRY = new BoxGeometry(0.85, 0.85, 0.85);
-const SPHERE_GEOMETRY = new SphereGeometry(0.45, 24, 24);
-const FACE_GEOMETRY = new SphereGeometry(0.07, 16, 16);
-const DRAG_RING_GEOMETRY = new RingGeometry(0.55, 0.65, 48);
-const DRAG_RING_MATERIAL = new MeshBasicMaterial({
-  color: "#8A5CFF",
-  transparent: true,
-  opacity: 0.38,
-  depthWrite: false,
-});
+const NODE_RADIUS = 0.55;
+
+const NODE_DISC_GEOMETRY = new CircleGeometry(NODE_RADIUS - 0.04, 64);
+const HALO_GEOMETRY = new RingGeometry(0.78, 0.92, 64);
+
 const floorPlane = new Plane(new Vector3(0, 1, 0), -FLOOR_Y);
 const tempPoint = new Vector3();
 
@@ -31,20 +27,274 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function clampToRoom(point: Vector3, roomScale: [number, number, number]) {
-  const roomHalfWidth = (10 * roomScale[0]) / 2 - 0.5;
-  const roomHalfDepth = (10 * roomScale[2]) / 2 - 0.5;
+  const halfW = (10 * roomScale[0]) / 2 - NODE_RADIUS;
+  const halfD = (10 * roomScale[2]) / 2 - NODE_RADIUS;
   point.y = FLOOR_Y;
-  point.x = clamp(point.x, -roomHalfWidth, roomHalfWidth);
-  point.z = clamp(point.z, -roomHalfDepth, roomHalfDepth);
+  point.x = clamp(point.x, -halfW, halfW);
+  point.z = clamp(point.z, -halfD, halfD);
+}
+
+function ringPoints(
+  radius: number,
+  segments = 80
+): [number, number, number][] {
+  const pts: [number, number, number][] = [];
+  for (let i = 0; i <= segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    pts.push([Math.cos(a) * radius, Math.sin(a) * radius, 0]);
+  }
+  return pts;
 }
 
 type TrackNodesProps = {
   tracks: Track[];
   onTrackDragCommit: (trackId: string, position: [number, number, number]) => void;
-  onListenerRef: (object: Mesh | null) => void;
-  onTrackRef: (trackId: string, object: Mesh | null) => void;
+  onListenerRef: (object: Object3D | null) => void;
+  onTrackRef: (trackId: string, object: Object3D | null) => void;
   roomScale: [number, number, number];
 };
+
+function ListenerHeadphones() {
+  const archPoints = useMemo(() => {
+    const pts: [number, number, number][] = [];
+    const segments = 40;
+    const radius = 0.4;
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const angle = Math.PI * (1 - t);
+      pts.push([
+        Math.cos(angle) * radius,
+        0.06 + Math.sin(angle) * radius * 0.95,
+        0,
+      ]);
+    }
+    return pts;
+  }, []);
+
+  const cupPoints = (sign: 1 | -1) => {
+    const w = 0.18;
+    const h = 0.32;
+    const r = 0.08;
+    const cx = sign * 0.4;
+    const cy = -0.06;
+    return [
+      [cx - w / 2 + r, cy - h / 2, 0],
+      [cx + w / 2 - r, cy - h / 2, 0],
+      [cx + w / 2, cy - h / 2 + r, 0],
+      [cx + w / 2, cy + h / 2 - r, 0],
+      [cx + w / 2 - r, cy + h / 2, 0],
+      [cx - w / 2 + r, cy + h / 2, 0],
+      [cx - w / 2, cy + h / 2 - r, 0],
+      [cx - w / 2, cy - h / 2 + r, 0],
+      [cx - w / 2 + r, cy - h / 2, 0],
+    ] as [number, number, number][];
+  };
+
+  return (
+    <Billboard>
+      <Line points={archPoints} color={INK} lineWidth={3.2} />
+      <Line points={cupPoints(-1)} color={INK} lineWidth={3} />
+      <Line points={cupPoints(1)} color={INK} lineWidth={3} />
+      <Line
+        points={[
+          [-0.48, -0.02, 0],
+          [-0.32, -0.02, 0],
+        ]}
+        color={INK}
+        lineWidth={2.5}
+      />
+      <Line
+        points={[
+          [0.32, -0.02, 0],
+          [0.48, -0.02, 0],
+        ]}
+        color={INK}
+        lineWidth={2.5}
+      />
+    </Billboard>
+  );
+}
+
+function OrientationCross({
+  position,
+}: {
+  position: [number, number, number];
+}) {
+  const len = 0.42;
+  const fontUrl = useItimFontUrl();
+  return (
+    <group position={position} rotation={[-Math.PI / 2, 0, 0]}>
+      <Line
+        points={[
+          [-len, 0, 0],
+          [len, 0, 0],
+        ]}
+        color={INK}
+        lineWidth={1.5}
+      />
+      <Line
+        points={[
+          [0, -len, 0],
+          [0, len, 0],
+        ]}
+        color={INK}
+        lineWidth={1.5}
+      />
+      <Text
+        position={[-len - 0.12, 0, 0]}
+        fontSize={0.16}
+        color={INK}
+        anchorX="center"
+        anchorY="middle"
+        font={fontUrl}
+      >
+        L
+      </Text>
+      <Text
+        position={[len + 0.12, 0, 0]}
+        fontSize={0.16}
+        color={INK}
+        anchorX="center"
+        anchorY="middle"
+        font={fontUrl}
+      >
+        R
+      </Text>
+      <Text
+        position={[0, len + 0.12, 0]}
+        fontSize={0.16}
+        color={INK}
+        anchorX="center"
+        anchorY="middle"
+        font={fontUrl}
+      >
+        F
+      </Text>
+      <Text
+        position={[0, -len - 0.12, 0]}
+        fontSize={0.16}
+        color={INK}
+        anchorX="center"
+        anchorY="middle"
+        font={fontUrl}
+      >
+        B
+      </Text>
+    </group>
+  );
+}
+
+type TrackNodeProps = {
+  track: Track;
+  index: number;
+  listenerPos: Vector3;
+  isDragging: boolean;
+  groupRef: (group: Group | null) => void;
+  onPointerDown: (event: ThreeEvent<PointerEvent>) => void;
+  onPointerMove: (event: ThreeEvent<PointerEvent>) => void;
+  onPointerUp: (event: ThreeEvent<PointerEvent>) => void;
+  onPointerMissed: () => void;
+};
+
+function TrackNode({
+  track,
+  index,
+  listenerPos,
+  isDragging,
+  groupRef,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerMissed,
+}: TrackNodeProps) {
+  const dx = track.position[0] - listenerPos.x;
+  const dz = track.position[2] - listenerPos.z;
+  const distance = Math.sqrt(dx * dx + dz * dz);
+
+  const circlePoints = useMemo(() => ringPoints(NODE_RADIUS, 80), []);
+  const fontUrl = useItimFontUrl();
+  const [hovered, setHovered] = useState(false);
+  const showLabel = hovered || isDragging;
+
+  return (
+    <group ref={groupRef} position={track.position}>
+      {isDragging ? (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.49, 0]}>
+          <primitive object={HALO_GEOMETRY} attach="geometry" />
+          <meshBasicMaterial
+            color={track.color}
+            transparent
+            opacity={0.4}
+            toneMapped={false}
+          />
+        </mesh>
+      ) : null}
+
+      <Billboard position={[0, 0, 0]}>
+        <mesh
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerMissed={onPointerMissed}
+          onPointerOver={(event) => {
+            event.stopPropagation();
+            setHovered(true);
+            document.body.style.cursor = "grab";
+          }}
+          onPointerOut={(event) => {
+            event.stopPropagation();
+            setHovered(false);
+            document.body.style.cursor = "";
+          }}
+        >
+          <primitive object={NODE_DISC_GEOMETRY} attach="geometry" />
+          <meshBasicMaterial color="#ffffff" toneMapped={false} />
+        </mesh>
+        <Line points={circlePoints} color={track.color} lineWidth={3} />
+        <Text
+          position={[0, 0, 0.001]}
+          fontSize={0.42}
+          color={INK}
+          anchorX="center"
+          anchorY="middle"
+          font={fontUrl}
+          outlineWidth={0}
+        >
+          {String(index + 1)}
+        </Text>
+      </Billboard>
+
+      {showLabel ? (
+        <Billboard position={[0, 1.0, 0]}>
+          <Text
+            position={[0, 0.08, 0]}
+            fontSize={0.22}
+            color={INK}
+            anchorX="center"
+            anchorY="middle"
+            font={fontUrl}
+            outlineWidth={0}
+            maxWidth={3}
+          >
+            {track.name}
+          </Text>
+          <Text
+            position={[0, -0.16, 0]}
+            fontSize={0.14}
+            color={INK}
+            fillOpacity={0.6}
+            anchorX="center"
+            anchorY="middle"
+            font={fontUrl}
+            outlineWidth={0}
+          >
+            {`${distance.toFixed(1)}m`}
+          </Text>
+        </Billboard>
+      ) : null}
+    </group>
+  );
+}
 
 export function TrackNodes({
   tracks,
@@ -54,63 +304,52 @@ export function TrackNodes({
   roomScale,
 }: TrackNodesProps) {
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
-  const trackRefs = useRef<Map<string, Mesh>>(new Map());
-  const dragRingRef = useRef<Mesh | null>(null);
+  const trackGroups = useRef<Map<string, Group>>(new Map());
   const draggingTrackIdRef = useRef<string | null>(null);
+  const listenerPos = useRef(new Vector3(0, FLOOR_Y, 0));
 
-  const dragColor = useMemo(
-    () => new Color(tracks.find((track) => track.id === draggingTrackId)?.color ?? "#8A5CFF"),
-    [draggingTrackId, tracks]
-  );
-
-  const updateDragFromEvent = (event: ThreeEvent<PointerEvent>, trackId: string) => {
+  const updateDragFromEvent = (
+    event: ThreeEvent<PointerEvent>,
+    trackId: string
+  ) => {
     if (!event.ray.intersectPlane(floorPlane, tempPoint)) return;
-
-    const halfW = (10 * roomScale[0]) / 2 - 0.5;
-    const halfD = (10 * roomScale[2]) / 2 - 0.5;
-    const newX = Math.max(-halfW, Math.min(halfW, tempPoint.x));
-    const newZ = Math.max(-halfD, Math.min(halfD, tempPoint.z));
-    tempPoint.set(newX, FLOOR_Y, newZ);
-
     clampToRoom(tempPoint, roomScale);
-    const mesh = trackRefs.current.get(trackId);
-    if (!mesh) return;
-
-    mesh.position.set(tempPoint.x, tempPoint.y, tempPoint.z);
-    if (dragRingRef.current) {
-      dragRingRef.current.position.set(tempPoint.x, 0.01, tempPoint.z);
-      dragRingRef.current.visible = true;
-    }
+    const group = trackGroups.current.get(trackId);
+    if (!group) return;
+    group.position.set(tempPoint.x, tempPoint.y, tempPoint.z);
   };
 
   return (
     <>
-      <mesh ref={onListenerRef} position={[0, 0.5, 0]} castShadow receiveShadow>
-        <primitive object={LISTENER_GEOMETRY} attach="geometry" />
-        <meshStandardMaterial color="#B991FF" roughness={0.95} metalness={0} />
-        <mesh position={[0.18, 0.08, -0.34]}>
-          <primitive object={FACE_GEOMETRY} attach="geometry" />
-          <meshStandardMaterial color="#6A3FE8" roughness={0.6} metalness={0} />
-        </mesh>
-      </mesh>
+      <group
+        ref={(group) => onListenerRef(group ?? null)}
+        position={[0, FLOOR_Y, 0]}
+      >
+        <ListenerHeadphones />
+        <OrientationCross position={[0, -0.48, 0]} />
+      </group>
 
-      {tracks.map((track) => (
-        <mesh
+      {tracks.map((track, index) => (
+        <TrackNode
           key={track.id}
-          ref={(mesh) => {
-            onTrackRef(track.id, mesh);
-            if (!mesh) {
-              trackRefs.current.delete(track.id);
+          track={track}
+          index={index}
+          listenerPos={listenerPos.current}
+          isDragging={draggingTrackId === track.id}
+          groupRef={(group) => {
+            onTrackRef(track.id, group ?? null);
+            if (!group) {
+              trackGroups.current.delete(track.id);
             } else {
-              trackRefs.current.set(track.id, mesh);
+              trackGroups.current.set(track.id, group);
             }
           }}
-          position={track.position}
-          castShadow
-          receiveShadow
           onPointerDown={(event) => {
             event.stopPropagation();
-            event.target.setPointerCapture(event.pointerId);
+            const target = event.target as Element & {
+              setPointerCapture?: (id: number) => void;
+            };
+            target.setPointerCapture?.(event.pointerId);
             setDraggingTrackId(track.id);
             draggingTrackIdRef.current = track.id;
             updateDragFromEvent(event, track.id);
@@ -124,34 +363,29 @@ export function TrackNodes({
             if (draggingTrackIdRef.current !== track.id) return;
             event.stopPropagation();
             updateDragFromEvent(event, track.id);
-            const mesh = trackRefs.current.get(track.id);
-            if (mesh) {
-              onTrackDragCommit(track.id, [mesh.position.x, mesh.position.y, mesh.position.z]);
+            const group = trackGroups.current.get(track.id);
+            if (group) {
+              onTrackDragCommit(track.id, [
+                group.position.x,
+                group.position.y,
+                group.position.z,
+              ]);
             }
             setDraggingTrackId(null);
             draggingTrackIdRef.current = null;
-            if (dragRingRef.current) dragRingRef.current.visible = false;
-            event.target.releasePointerCapture(event.pointerId);
+            const target = event.target as Element & {
+              releasePointerCapture?: (id: number) => void;
+            };
+            target.releasePointerCapture?.(event.pointerId);
           }}
           onPointerMissed={() => {
             if (draggingTrackIdRef.current === track.id) {
               setDraggingTrackId(null);
               draggingTrackIdRef.current = null;
-              if (dragRingRef.current) dragRingRef.current.visible = false;
             }
           }}
-        >
-          <primitive object={SPHERE_GEOMETRY} attach="geometry" />
-          <meshStandardMaterial color={track.color} roughness={0.9} metalness={0} />
-        </mesh>
+        />
       ))}
-
-      {draggingTrackId ? (
-        <mesh ref={dragRingRef} position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <primitive object={DRAG_RING_GEOMETRY} attach="geometry" />
-          <primitive object={DRAG_RING_MATERIAL.clone()} attach="material" color={dragColor} />
-        </mesh>
-      ) : null}
     </>
   );
 }

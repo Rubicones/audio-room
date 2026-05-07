@@ -39,10 +39,12 @@ type ResonanceSource = ReturnType<ResonanceSceneLike["createSource"]>;
 type TrackNodeBundle = {
   player: Tone.Player;
   source: ResonanceSource;
+  uiGain: GainNode;
   mixGain: GainNode;
   distanceGain: GainNode;
   airFilter: BiquadFilterNode;
   occlusionFilter: BiquadFilterNode;
+  shadowFilter: BiquadFilterNode;
 };
 
 type AudioEngineState = {
@@ -50,10 +52,13 @@ type AudioEngineState = {
   audioContext: AudioContext;
   resonanceScene: ResonanceSceneLike;
   roomGain: GainNode;
+  masterAnalyser: AnalyserNode;
   listenerPosition: Vector3;
   listenerForward: Vector3;
   roomDimensions: { width: number; height: number; depth: number };
 };
+
+const analyserBuffer = new Uint8Array(256);
 
 let engineState: AudioEngineState | null = null;
 let resonanceCtor: ResonanceCtor | null = null;
@@ -71,6 +76,31 @@ let globalPlaybackStartTime = 0;
 const forwardVector = new Vector3();
 const upVector = new Vector3();
 const sourceDirection = new Vector3();
+
+/** Educational acoustic-shadow low-pass (bypassed when false). */
+let educationalShadowsEnabled = false;
+const shadowOcclusionState = new Map<string, number>();
+
+const MATERIAL_ALPHA_MAP: Record<RoomMaterialPreset, number> = {
+  brick: 0.3,
+  wood: 0.45,
+  "acoustic-foam": 0.9,
+  marble: 0.05,
+};
+
+export type RoomAcousticsResult = {
+  rt60Ms: number;
+  rt60Sec: number;
+  width: number;
+  height: number;
+  depth: number;
+  materialAlpha: number;
+};
+
+function gainDbToLinear(gainDb: number) {
+  if (!Number.isFinite(gainDb)) return 0;
+  return Math.pow(10, gainDb / 20);
+}
 
 function getEngineState() {
   if (engineState) return engineState;
@@ -94,7 +124,11 @@ function getEngineState() {
   const resonanceScene = new resonanceCtor(nativeAudioContext);
   const roomGain = nativeAudioContext.createGain();
   roomGain.gain.value = 1;
+  const masterAnalyser = nativeAudioContext.createAnalyser();
+  masterAnalyser.fftSize = 256;
+  masterAnalyser.smoothingTimeConstant = 0.7;
   resonanceScene.output.connect(roomGain);
+  roomGain.connect(masterAnalyser);
   roomGain.connect(nativeAudioContext.destination);
 
   engineState = {
@@ -102,6 +136,7 @@ function getEngineState() {
     audioContext,
     resonanceScene,
     roomGain,
+    masterAnalyser,
     listenerPosition: new Vector3(0, 0.5, 0),
     listenerForward: new Vector3(0, 0, -1),
     roomDimensions: { width: 10, height: 4, depth: 10 },
@@ -189,6 +224,7 @@ async function ensureTrackAudio(track: Track) {
   const player = new Tone.Player({ loop: true, autostart: false });
   player.mute = false;
 
+  const uiGain = audioContext.createGain();
   const mixGain = audioContext.createGain();
   const distanceGain = audioContext.createGain();
   const airFilter = audioContext.createBiquadFilter();
@@ -196,24 +232,39 @@ async function ensureTrackAudio(track: Track) {
   airFilter.frequency.value = 20000;
   airFilter.Q.value = 0.0001;
   const occlusionFilter = audioContext.createBiquadFilter();
+  const shadowFilter = audioContext.createBiquadFilter();
+  uiGain.gain.value = Math.max(0.0001, gainDbToLinear(track.gainDb));
   mixGain.gain.value = 1;
   distanceGain.gain.value = 1;
   occlusionFilter.type = "lowpass";
   occlusionFilter.frequency.value = 12000;
   occlusionFilter.Q.value = 0.7;
+  shadowFilter.type = "lowpass";
+  shadowFilter.frequency.value = 20000;
+  shadowFilter.Q.value = 0.7;
 
   // Tone node -> native graph -> Resonance source input.
-  player.connect(mixGain);
+  player.connect(uiGain);
+  uiGain.connect(mixGain);
   mixGain.connect(distanceGain);
   distanceGain.connect(airFilter);
   airFilter.connect(occlusionFilter);
-  occlusionFilter.connect(source.input);
+  occlusionFilter.connect(shadowFilter);
+  shadowFilter.connect(source.input);
 
   try {
     await player.load(track.audioUrl);
   } catch (error) {
     console.warn(`Failed to load track "${track.name}" from "${track.audioUrl}"`, error);
-    nodesCleanup(player, mixGain, distanceGain, occlusionFilter);
+    nodesCleanup(
+      player,
+      uiGain,
+      mixGain,
+      distanceGain,
+      airFilter,
+      occlusionFilter,
+      shadowFilter
+    );
     return;
   }
   sources.set(track.id, source);
@@ -221,10 +272,12 @@ async function ensureTrackAudio(track: Track) {
   trackNodes.set(track.id, {
     player,
     source,
+    uiGain,
     mixGain,
     distanceGain,
     airFilter,
     occlusionFilter,
+    shadowFilter,
   });
   refreshTrackMix();
 
@@ -240,14 +293,20 @@ async function ensureTrackAudio(track: Track) {
 
 function nodesCleanup(
   player: Tone.Player,
+  uiGain: GainNode,
   mixGain: GainNode,
   distanceGain: GainNode,
-  occlusionFilter: BiquadFilterNode
+  airFilter: BiquadFilterNode,
+  occlusionFilter: BiquadFilterNode,
+  shadowFilter: BiquadFilterNode
 ) {
   player.dispose();
+  uiGain.disconnect();
   mixGain.disconnect();
   distanceGain.disconnect();
+  airFilter.disconnect();
   occlusionFilter.disconnect();
+  shadowFilter.disconnect();
 }
 
 function refreshTrackMix() {
@@ -268,6 +327,18 @@ function setTrackMixState(tracks: Track[]) {
   refreshTrackMix();
 }
 
+function setTrackUiGainDb(trackId: string, gainDb: number) {
+  if (!engineState) return;
+  const nodes = trackNodes.get(trackId);
+  if (!nodes) return;
+  const t = engineState.audioContext.currentTime;
+  const linear = gainDbToLinear(gainDb);
+  // Use epsilon to keep exponential response stable even near silence.
+  const target = Math.max(0.0001, linear);
+  nodes.uiGain.gain.cancelScheduledValues(t);
+  nodes.uiGain.gain.setTargetAtTime(target, t, 0.06);
+}
+
 function pruneTracks(validIds: string[]) {
   const validSet = new Set(validIds);
   for (const id of trackIds) {
@@ -275,10 +346,13 @@ function pruneTracks(validIds: string[]) {
     trackIds.delete(id);
     const nodes = trackNodes.get(id);
     nodes?.player.dispose();
+    nodes?.uiGain.disconnect();
     nodes?.mixGain.disconnect();
     nodes?.distanceGain.disconnect();
-  nodes?.airFilter.disconnect();
+    nodes?.airFilter.disconnect();
     nodes?.occlusionFilter.disconnect();
+    nodes?.shadowFilter.disconnect();
+    shadowOcclusionState.delete(id);
     players.delete(id);
     sources.delete(id);
     trackNodes.delete(id);
@@ -407,6 +481,7 @@ function updateRoomAcoustics(
   };
 
   const selected = MATERIAL_MAP[materialPreset];
+  const materialAlpha = enableRoomReverb ? MATERIAL_ALPHA_MAP[materialPreset] : 0.95;
   resonanceScene.setRoomProperties?.(
     { width, height, depth },
     enableRoomReverb ? selected.materials : deadRoom
@@ -416,7 +491,46 @@ function updateRoomAcoustics(
   const area = 2 * (width * depth + width * height + depth * height);
   const absorption = enableRoomReverb ? selected.absorption : 0.95;
   const rt60 = Math.max(0.12, (0.161 * width * height * depth) / Math.max(0.01, area * absorption));
-  return Math.round(rt60 * 1000);
+  return {
+    rt60Ms: Math.round(rt60 * 1000),
+    rt60Sec: rt60,
+    width,
+    height,
+    depth,
+    materialAlpha,
+  };
+}
+
+function setEducationalShadowEnabled(enabled: boolean) {
+  educationalShadowsEnabled = enabled;
+  if (!engineState) return;
+  const t = engineState.audioContext.currentTime;
+  for (const nodes of trackNodes.values()) {
+    nodes.shadowFilter.frequency.cancelScheduledValues(t);
+    nodes.shadowFilter.frequency.setValueAtTime(20000, t);
+  }
+  shadowOcclusionState.clear();
+}
+
+function updateTrackShadowOcclusion(
+  trackId: string,
+  occlusionFactor: number,
+  materialAlpha: number
+) {
+  if (!educationalShadowsEnabled || !engineState) return;
+  const nodes = trackNodes.get(trackId);
+  if (!nodes) return;
+  const clampedOcclusion = Math.min(1, Math.max(0, occlusionFactor));
+  const prev = shadowOcclusionState.get(trackId);
+  if (prev !== undefined && Math.abs(prev - clampedOcclusion) < 0.02) return;
+  shadowOcclusionState.set(trackId, clampedOcclusion);
+
+  const alpha = Math.min(1, Math.max(0, materialAlpha));
+  const minFreq = 400 + (1 - alpha) * 1600;
+  const target = minFreq + clampedOcclusion * (20000 - minFreq);
+  const t = engineState.audioContext.currentTime;
+  nodes.shadowFilter.frequency.cancelScheduledValues(t);
+  nodes.shadowFilter.frequency.setTargetAtTime(target, t, 0.1);
 }
 
 function setAirAbsorptionEnabled(enabled: boolean) {
@@ -483,22 +597,92 @@ function disposeAudioEngine() {
   globalPlaybackStartTime = 0;
   for (const player of players.values()) player.dispose();
   for (const nodes of trackNodes.values()) {
+    nodes.uiGain.disconnect();
     nodes.mixGain.disconnect();
     nodes.distanceGain.disconnect();
     nodes.airFilter.disconnect();
     nodes.occlusionFilter.disconnect();
+    nodes.shadowFilter.disconnect();
   }
   players.clear();
   sources.clear();
   trackIds.clear();
   trackNodes.clear();
   trackMixState.clear();
+  shadowOcclusionState.clear();
   airAbsorptionEnabled = false;
+  educationalShadowsEnabled = false;
   engineState = null;
 }
 
 function isAudioPlaying() {
   return isPlaying;
+}
+
+function readMasterLevel() {
+  if (!engineState || !isPlaying) return 0;
+  engineState.masterAnalyser.getByteTimeDomainData(analyserBuffer);
+  let sum = 0;
+  for (let i = 0; i < analyserBuffer.length; i++) {
+    const v = (analyserBuffer[i] - 128) / 128;
+    sum += v * v;
+  }
+  const rms = Math.sqrt(sum / analyserBuffer.length);
+  return Math.min(1, rms * 2.4);
+}
+
+function getTransportSeconds() {
+  if (!engineState) return 0;
+  return Math.max(0, Tone.Transport.seconds);
+}
+
+function getMaxTrackDurationSeconds() {
+  let max = 0;
+  for (const nodes of trackNodes.values()) {
+    const duration = nodes.player.buffer?.duration ?? 0;
+    if (Number.isFinite(duration) && duration > max) max = duration;
+  }
+  return max;
+}
+
+function seekTransport(seconds: number) {
+  if (!engineState) return;
+  const safe = Math.max(0, seconds);
+  const wasPlaying = isPlaying;
+
+  players.forEach((player) => {
+    try {
+      player.stop();
+    } catch {
+      // no-op
+    }
+  });
+  try {
+    Tone.Transport.stop();
+  } catch {
+    // no-op
+  }
+
+  Tone.Transport.seconds = safe;
+
+  if (wasPlaying) {
+    const startAt = Tone.now() + 0.03;
+    globalPlaybackStartTime = engineState.audioContext.currentTime + 0.03 - safe;
+    players.forEach((player) => {
+      try {
+        const duration = player.buffer?.duration ?? 0;
+        const offset = duration > 0 ? safe % duration : 0;
+        player.start(startAt, offset);
+      } catch {
+        // no-op
+      }
+    });
+    Tone.Transport.start();
+    isPlaying = true;
+  } else {
+    isPlaying = false;
+    globalPlaybackStartTime = 0;
+  }
 }
 
 function isTrackAudible(trackId: string) {
@@ -514,10 +698,17 @@ export {
   setListenerTransform,
   setTrackPosition,
   setTrackMixState,
+  setTrackUiGainDb,
   toggleTransport,
   setAirAbsorptionEnabled,
+  setEducationalShadowEnabled,
+  updateTrackShadowOcclusion,
   isAudioPlaying,
   isTrackAudible,
+  readMasterLevel,
+  getTransportSeconds,
+  getMaxTrackDurationSeconds,
+  seekTransport,
   updateRoomAcoustics,
   waitForToneLoaded,
   preloadTracks,
