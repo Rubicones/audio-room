@@ -15,8 +15,10 @@ import { useItimFontUrl } from "./sketch";
 const INK = "#1a1a1a";
 const FLOOR_Y = 0.5;
 const NODE_RADIUS = 0.55;
+const NODE_HIT_RADIUS = 0.95;
 
 const NODE_DISC_GEOMETRY = new CircleGeometry(NODE_RADIUS - 0.04, 64);
+const NODE_HIT_GEOMETRY = new CircleGeometry(NODE_HIT_RADIUS, 40);
 const HALO_GEOMETRY = new RingGeometry(0.78, 0.92, 64);
 
 const floorPlane = new Plane(new Vector3(0, 1, 0), -FLOOR_Y);
@@ -250,6 +252,22 @@ function TrackNode({
           <primitive object={NODE_DISC_GEOMETRY} attach="geometry" />
           <meshBasicMaterial color="#ffffff" toneMapped={false} />
         </mesh>
+        {/* Larger invisible touch target so mobile drag is easier to grab. */}
+        <mesh
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerMissed={onPointerMissed}
+        >
+          <primitive object={NODE_HIT_GEOMETRY} attach="geometry" />
+          <meshBasicMaterial
+            color="#ffffff"
+            transparent
+            opacity={0}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
         <Line points={circlePoints} color={track.color} lineWidth={3} />
         <Text
           position={[0, 0, 0.001]}
@@ -319,8 +337,52 @@ export function TrackNodes({
     group.position.set(tempPoint.x, tempPoint.y, tempPoint.z);
   };
 
+  const commitDrag = (trackId: string) => {
+    const group = trackGroups.current.get(trackId);
+    if (!group) return;
+    onTrackDragCommit(trackId, [
+      group.position.x,
+      group.position.y,
+      group.position.z,
+    ]);
+  };
+
+  const activeDragId = draggingTrackIdRef.current;
+  const dragPlaneWidth = 10 * roomScale[0];
+  const dragPlaneDepth = 10 * roomScale[2];
+
   return (
     <>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, FLOOR_Y + 0.002, 0]}
+        visible={activeDragId !== null}
+        onPointerMove={(event) => {
+          const trackId = draggingTrackIdRef.current;
+          if (!trackId) return;
+          event.stopPropagation();
+          updateDragFromEvent(event, trackId);
+        }}
+        onPointerUp={(event) => {
+          const trackId = draggingTrackIdRef.current;
+          if (!trackId) return;
+          event.stopPropagation();
+          updateDragFromEvent(event, trackId);
+          commitDrag(trackId);
+          setDraggingTrackId(null);
+          draggingTrackIdRef.current = null;
+        }}
+        onPointerOut={(event) => {
+          const trackId = draggingTrackIdRef.current;
+          if (!trackId) return;
+          if (event.pointerType !== "touch") return;
+          updateDragFromEvent(event, trackId);
+        }}
+      >
+        <planeGeometry args={[dragPlaneWidth, dragPlaneDepth]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} toneMapped={false} />
+      </mesh>
+
       <group
         ref={(group) => onListenerRef(group ?? null)}
         position={[0, FLOOR_Y, 0]}
@@ -363,14 +425,7 @@ export function TrackNodes({
             if (draggingTrackIdRef.current !== track.id) return;
             event.stopPropagation();
             updateDragFromEvent(event, track.id);
-            const group = trackGroups.current.get(track.id);
-            if (group) {
-              onTrackDragCommit(track.id, [
-                group.position.x,
-                group.position.y,
-                group.position.z,
-              ]);
-            }
+            commitDrag(track.id);
             setDraggingTrackId(null);
             draggingTrackIdRef.current = null;
             const target = event.target as Element & {
