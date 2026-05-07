@@ -24,18 +24,18 @@ const PALETTE = ["#E16A6A", "#E5B94A", "#5BC489", "#7B5BE6", "#4A90E2", "#E07A5F
 // All stems in `public/demo_track/` — loaded when the user clicks
 // "Set up the demo track".
 const DEMO_TRACK_FILES = [
-  "vocal.wav",
-  "vocal 2.wav",
-  "guitar.wav",
-  "guitar 2.wav",
-  "guitar+piano.wav",
-  "guitar+piano 2.wav",
-  "bass.wav",
-  "kick.wav",
-  "snare.wav",
-  "snare 2.wav",
-  "overheads.wav",
-  "overheads 2.wav",
+  "vocal.webm",
+  "vocal 2.webm",
+  "guitar.webm",
+  "guitar 2.webm",
+  "guitarpiano.webm",
+  "guitarpiano 2.webm",
+  "bass.webm",
+  "kick.webm",
+  "snare.webm",
+  "snare 2.webm",
+  "overheads.webm",
+  "overheads 2.webm",
 ] as const;
 
 function buildDemoTracks(startIndex: number): TrackConfig[] {
