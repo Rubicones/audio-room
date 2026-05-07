@@ -1,0 +1,165 @@
+"use client";
+
+import { createContext, useContext, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import type { Track, TrackConfig, Vec3 } from "./types";
+
+type RoomScale = [number, number, number];
+export type RoomMaterialPreset = "brick" | "wood" | "acoustic-foam" | "marble";
+
+type AcousticSettings = {
+  roomMaterial: RoomMaterialPreset;
+  enableRoomReverb: boolean;
+  enableAirAbsorption: boolean;
+  rt60Ms: number;
+  showAttenuationZones: boolean;
+  showAcousticShadows: boolean;
+  showCriticalDistance: boolean;
+};
+
+type TrackStoreValue = {
+  tracks: Track[];
+  roomScale: RoomScale;
+  acousticSettings: AcousticSettings;
+  addTracks: (configs: TrackConfig[]) => void;
+  removeTrack: (trackId: string) => void;
+  updateTrackPosition: (trackId: string, position: Vec3) => void;
+  updateTrackName: (trackId: string, name: string) => void;
+  updateTrackColor: (trackId: string, color: string) => void;
+  toggleTrackMute: (trackId: string) => void;
+  toggleTrackSolo: (trackId: string) => void;
+  setRoomScale: (scale: RoomScale) => void;
+  setRoomMaterial: (preset: RoomMaterialPreset) => void;
+  setEnableRoomReverb: (enabled: boolean) => void;
+  setEnableAirAbsorption: (enabled: boolean) => void;
+  setRt60Ms: (value: number) => void;
+  setShowAttenuationZones: (enabled: boolean) => void;
+  setShowAcousticShadows: (enabled: boolean) => void;
+  setShowCriticalDistance: (enabled: boolean) => void;
+  setTrackGainDb: (trackId: string, gainDb: number) => void;
+};
+
+const TrackStoreContext = createContext<TrackStoreValue | null>(null);
+
+function randomSpawnPosition(): Vec3 {
+  const range = 3.8;
+  const x = (Math.random() * 2 - 1) * range;
+  const z = (Math.random() * 2 - 1) * range;
+  return [x, 0.5, z];
+}
+
+function createTrack(config: TrackConfig): Track {
+  const { gainDb: _g, ...rest } = config;
+  return {
+    ...rest,
+    id: crypto.randomUUID(),
+    position: randomSpawnPosition(),
+    muted: false,
+    solo: false,
+    gainDb: Number.isFinite(config.gainDb) ? (config.gainDb as number) : 0,
+  };
+}
+
+export function TrackStoreProvider({ children }: { children: ReactNode }) {
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [roomScale, setRoomScale] = useState<RoomScale>([1, 1, 1]);
+  const [acousticSettings, setAcousticSettings] = useState<AcousticSettings>({
+    roomMaterial: "brick",
+    enableRoomReverb: true,
+    enableAirAbsorption: false,
+    rt60Ms: 850,
+    showAttenuationZones: false,
+    showAcousticShadows: false,
+    showCriticalDistance: false,
+  });
+
+  const value = useMemo<TrackStoreValue>(
+    () => ({
+      tracks,
+      roomScale,
+      acousticSettings,
+      addTracks: (configs) => {
+        setTracks((current) => [
+          ...current,
+          ...configs.map((config) => createTrack(config)),
+        ]);
+      },
+      removeTrack: (trackId) => {
+        setTracks((current) => current.filter((track) => track.id !== trackId));
+      },
+      updateTrackPosition: (trackId, position) => {
+        setTracks((current) =>
+          current.map((track) => (track.id === trackId ? { ...track, position } : track))
+        );
+      },
+      updateTrackName: (trackId, name) => {
+        setTracks((current) =>
+          current.map((track) => (track.id === trackId ? { ...track, name } : track))
+        );
+      },
+      updateTrackColor: (trackId, color) => {
+        setTracks((current) =>
+          current.map((track) => (track.id === trackId ? { ...track, color } : track))
+        );
+      },
+      toggleTrackMute: (trackId) => {
+        setTracks((current) =>
+          current.map((track) =>
+            track.id === trackId ? { ...track, muted: !track.muted } : track
+          )
+        );
+      },
+      toggleTrackSolo: (trackId) => {
+        setTracks((current) =>
+          current.map((track) =>
+            track.id === trackId ? { ...track, solo: !track.solo } : track
+          )
+        );
+      },
+      setRoomScale,
+      setRoomMaterial: (preset) => {
+        setAcousticSettings((current) => ({ ...current, roomMaterial: preset }));
+      },
+      setEnableRoomReverb: (enabled) => {
+        setAcousticSettings((current) => ({ ...current, enableRoomReverb: enabled }));
+      },
+      setEnableAirAbsorption: (enabled) => {
+        setAcousticSettings((current) => ({ ...current, enableAirAbsorption: enabled }));
+      },
+      setRt60Ms: (value) => {
+        setAcousticSettings((current) => ({ ...current, rt60Ms: value }));
+      },
+      setShowAttenuationZones: (enabled) => {
+        setAcousticSettings((current) => ({ ...current, showAttenuationZones: enabled }));
+      },
+      setShowAcousticShadows: (enabled) => {
+        setAcousticSettings((current) => ({ ...current, showAcousticShadows: enabled }));
+      },
+      setShowCriticalDistance: (enabled) => {
+        setAcousticSettings((current) => ({ ...current, showCriticalDistance: enabled }));
+      },
+      setTrackGainDb: (trackId, gainDb) => {
+        const normalized =
+          gainDb <= -60 || !Number.isFinite(gainDb)
+            ? -Infinity
+            : Math.max(-59, Math.min(12, gainDb));
+        setTracks((current) =>
+          current.map((track) =>
+            track.id === trackId ? { ...track, gainDb: normalized } : track
+          )
+        );
+      },
+    }),
+    [tracks, roomScale, acousticSettings]
+  );
+
+  return <TrackStoreContext.Provider value={value}>{children}</TrackStoreContext.Provider>;
+}
+
+export function useTrackStore() {
+  const context = useContext(TrackStoreContext);
+  if (!context) {
+    throw new Error("useTrackStore must be used within TrackStoreProvider");
+  }
+  return context;
+}

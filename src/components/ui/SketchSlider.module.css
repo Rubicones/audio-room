@@ -1,0 +1,75 @@
+.row {
+  display: grid;
+  grid-template-columns: 50px 1fr 50px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.label {
+  font-size: 16px;
+  color: var(--ink, #1a1a1a);
+  font-family: inherit;
+}
+
+.track {
+  position: relative;
+  height: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  user-select: none;
+  touch-action: none;
+  min-width: 0;
+}
+
+.lineMuted {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  background: var(--accent-grey, #b0b0b0);
+  transform: translateY(-1px);
+  border-radius: 1px;
+}
+
+.linePlayed {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 2px;
+  background: var(--ink, #1a1a1a);
+  transform: translateY(-1px);
+  border-radius: 1px 0 0 1px;
+  max-width: 100%;
+  pointer-events: none;
+}
+
+.handle {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--ink, #1a1a1a);
+  border: none;
+  outline: none;
+  box-shadow: none;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.track:focus,
+.track:focus-visible {
+  outline: none;
+}
+
+.value {
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink, #1a1a1a);
+  text-align: center;
+  white-space: nowrap;
+}
