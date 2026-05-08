@@ -22,7 +22,6 @@ import { ObstacleColumn } from "./ObstacleColumn";
 import { Room } from "./Room";
 import { useTrackStore } from "./TrackStore";
 import { TrackNodes } from "./TrackNodes";
-import { getForwardDirectionFromRotationDeg } from "./directivity";
 
 type SceneContentsProps = {
   view: CameraView;
@@ -62,6 +61,11 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
   const worldQuaternion = useRef(new Quaternion());
   const worldForward = useRef(new Vector3(0, 0, -1));
   const worldUp = useRef(new Vector3(0, 1, 0));
+  const listenerPositionTuple = useRef<[number, number, number]>([0, 0, 0]);
+  const listenerForwardTuple = useRef<[number, number, number]>([0, 0, -1]);
+  const listenerUpTuple = useRef<[number, number, number]>([0, 1, 0]);
+  const trackPositionTuple = useRef<[number, number, number]>([0, 0, 0]);
+  const directivityTuple = useRef<[number, number, number]>([0, 0, -1]);
 
   const listenerRef = useRef<Object3D | null>(null);
   const trackRefs = useRef<Map<string, Object3D>>(new Map());
@@ -163,27 +167,38 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
         .applyQuaternion(worldQuaternion.current)
         .normalize();
       worldUp.current.set(0, 1, 0).applyQuaternion(worldQuaternion.current).normalize();
+      listenerPositionTuple.current[0] = worldPosition.current.x;
+      listenerPositionTuple.current[1] = worldPosition.current.y;
+      listenerPositionTuple.current[2] = worldPosition.current.z;
+      listenerForwardTuple.current[0] = worldForward.current.x;
+      listenerForwardTuple.current[1] = worldForward.current.y;
+      listenerForwardTuple.current[2] = worldForward.current.z;
+      listenerUpTuple.current[0] = worldUp.current.x;
+      listenerUpTuple.current[1] = worldUp.current.y;
+      listenerUpTuple.current[2] = worldUp.current.z;
       setListenerTransform(
-        [worldPosition.current.x, worldPosition.current.y, worldPosition.current.z],
-        [worldForward.current.x, worldForward.current.y, worldForward.current.z],
-        [worldUp.current.x, worldUp.current.y, worldUp.current.z]
+        listenerPositionTuple.current,
+        listenerForwardTuple.current,
+        listenerUpTuple.current
       );
     }
 
     trackRefs.current.forEach((object, trackId) => {
       object.getWorldPosition(worldPosition.current);
-      setTrackPosition(trackId, [
-        worldPosition.current.x,
-        worldPosition.current.y,
-        worldPosition.current.z,
-      ]);
+      trackPositionTuple.current[0] = worldPosition.current.x;
+      trackPositionTuple.current[1] = worldPosition.current.y;
+      trackPositionTuple.current[2] = worldPosition.current.z;
+      setTrackPosition(trackId, trackPositionTuple.current);
       const directivity = directivityMapRef.current.get(trackId);
-      const direction = getForwardDirectionFromRotationDeg(
-        directivity?.rotationDeg ?? 0
-      );
+      const rad = ((directivity?.rotationDeg ?? 0) * Math.PI) / 180;
+      const x = Math.sin(rad);
+      const z = -Math.cos(rad);
+      directivityTuple.current[0] = x;
+      directivityTuple.current[1] = 0;
+      directivityTuple.current[2] = z;
       setTrackDirectivityState(
         trackId,
-        [direction.x, 0, direction.z],
+        directivityTuple.current,
         directivity?.enabled ?? false
       );
     });

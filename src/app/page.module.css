@@ -592,26 +592,22 @@
 
 .summaryDrawer {
   position: absolute;
-  top: 28px;
-  left: 372px;
-  width: 320px;
-  max-height: calc(100vh - 56px);
-  z-index: 9;
-  border: 2px solid var(--ink, #1a1a1a);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(10px);
-  padding: 14px;
-  transform: translateX(-18px);
-  opacity: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 340px;
+  z-index: 12;
+  border-left: 1px solid var(--ink, #1a1a1a);
+  background: #ffffff;
+  padding: 18px 14px;
+  transform: translateX(100%);
   pointer-events: none;
-  transition: transform 220ms ease, opacity 220ms ease;
+  transition: transform 220ms ease;
   overflow-y: auto;
 }
 
 .summaryDrawerOpen {
   transform: translateX(0);
-  opacity: 1;
   pointer-events: auto;
 }
 
@@ -619,12 +615,41 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   margin-bottom: 10px;
 }
 
 .summaryTitle {
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 400;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.summaryTrackTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.summaryTrackPrefix {
+  flex-shrink: 0;
+}
+
+.summaryTrackName {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summaryTrackDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex-shrink: 0;
 }
 
 .summaryClose {
@@ -636,22 +661,22 @@
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .summaryBody {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .summaryRow {
   display: grid;
   grid-template-columns: 1fr auto auto;
   align-items: center;
-  gap: 8px;
-  border: 1px solid rgba(26, 26, 26, 0.2);
-  border-radius: 8px;
-  padding: 8px;
+  gap: 10px;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.22);
+  padding: 9px 2px;
 }
 
 .summaryKey {
@@ -661,16 +686,43 @@
 
 .summaryValue {
   font-size: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .copyBtn {
   min-width: 54px;
-  height: 32px;
-  border: 2px solid var(--ink, #1a1a1a);
-  border-radius: 8px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--ink, #1a1a1a);
+  border-radius: 6px;
   background: #ffffff;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
+  line-height: normal;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: lowercase;
+  font-family: inherit;
+}
+
+.copyToast {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 70;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 10px;
+  background: #ffffff;
+  font-size: 13px;
+  color: var(--ink, #1a1a1a);
+  display: inline-flex;
+  align-items: center;
+  box-shadow: none;
 }
 
 .summaryEmpty {
@@ -701,6 +753,9 @@
 .mobileDetailValue {
   display: block;
   font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 900px) {
@@ -796,8 +851,8 @@
   .summaryClose,
   .copyBtn,
   .toggle {
-    min-height: 40px;
-    min-width: 40px;
+    min-height: 44px;
+    min-width: 44px;
   }
 
   .helpTrigger,
@@ -827,7 +882,6 @@
   }
 
   .mobileDetails {
-    grid-template-columns: 1fr;
     padding-left: 0;
   }
 

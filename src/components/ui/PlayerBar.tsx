@@ -13,6 +13,7 @@ const SCRUB_THROTTLE_MS = 45;
 type PlayerBarProps = {
   isPlaying: boolean;
   disabled: boolean;
+  loading?: boolean;
   onTogglePlay: () => void;
 };
 
@@ -26,6 +27,7 @@ function formatTime(seconds: number) {
 export function PlayerBar({
   isPlaying,
   disabled,
+  loading = false,
   onTogglePlay,
 }: PlayerBarProps) {
   const trackRef = useRef<HTMLDivElement>(null);
@@ -125,10 +127,12 @@ export function PlayerBar({
         type="button"
         className={`${styles.playBtn} ${isPlaying ? styles.playBtnActive : ""}`}
         onClick={onTogglePlay}
-        disabled={disabled}
-        aria-label={isPlaying ? "Pause" : "Play"}
+        disabled={disabled || loading}
+        aria-label={loading ? "Loading" : isPlaying ? "Pause" : "Play"}
       >
-        {isPlaying ? (
+        {loading ? (
+          <span className={styles.spinner} aria-hidden />
+        ) : isPlaying ? (
           <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor">
             <rect x="6" y="5" width="4" height="14" rx="1" />
             <rect x="14" y="5" width="4" height="14" rx="1" />

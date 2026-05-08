@@ -1,0 +1,82 @@
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  background-color: var(--paper, #ffffff);
+  background-image: radial-gradient(
+    circle at center,
+    var(--dot-grid, #e0e0e0) 1px,
+    transparent 1px
+  );
+  background-size: 20px 20px;
+  background-attachment: fixed;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.panel {
+  width: min(760px, 100%);
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.logo {
+  font-size: clamp(44px, 9vw, 92px);
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 0.9;
+  text-transform: lowercase;
+  text-align: left;
+  margin: 0;
+}
+
+.description {
+  max-width: 620px;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.startClean,
+.startDemo {
+  min-width: 180px;
+  height: 44px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 8px;
+  font-size: 15px;
+  text-transform: lowercase;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.startClean {
+  background: #000000;
+  color: #ffffff;
+}
+
+.startDemo {
+  background: #ffffff;
+  color: #000000;
+}
+
+.contactLine {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.contactLink {
+  color: #000000;
+  text-decoration: underline;
+}
+

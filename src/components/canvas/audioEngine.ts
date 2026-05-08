@@ -79,6 +79,7 @@ const sources = new Map<string, ResonanceSource>();
 const players = new Map<string, Tone.Player>();
 const trackNodes = new Map<string, TrackNodeBundle>();
 const trackPositions = new Map<string, [number, number, number]>();
+const pendingTrackPositions = new Map<string, { x: number; y: number; z: number }>();
 const trackMixState = new Map<string, { muted: boolean; solo: boolean }>();
 const trackDirectivityState = new Map<
   string,
@@ -87,6 +88,7 @@ const trackDirectivityState = new Map<
 let isPlaying = false;
 let airAbsorptionEnabled = false;
 let globalPlaybackStartTime = 0;
+let trackPositionRafId: number | null = null;
 
 const forwardVector = new Vector3();
 const upVector = new Vector3();
@@ -123,6 +125,11 @@ export type TrackAcousticData = {
   occluded: boolean;
 };
 
+export type TrackLoadingState = {
+  loaded: number;
+  total: number;
+};
+
 function gainDbToLinear(gainDb: number) {
   if (!Number.isFinite(gainDb)) return 0;
   return Math.pow(10, gainDb / 20);
@@ -148,8 +155,11 @@ function getEngineState() {
     throw new Error("Web Audio API is not supported in this browser.");
   }
 
-  const nativeAudioContext = new NativeAudioContext();
+  const nativeAudioContext = new NativeAudioContext({
+    latencyHint: "playback",
+  } as AudioContextOptions);
   Tone.setContext(nativeAudioContext);
+  (Tone.getContext() as unknown as { lookAhead?: number }).lookAhead = 0.15;
   const audioContext = Tone.getContext().rawContext as AudioContext;
 
   const resonanceScene = new resonanceCtor(nativeAudioContext);
@@ -204,12 +214,6 @@ async function ensureResonanceCtor() {
   return resonanceCtorPromise;
 }
 
-function mapThreeToResonance([x, y, z]: [number, number, number]) {
-  // Resonance and Three axes can be perceived mirrored in this setup.
-  // Flipping X aligns visual left with headphone left.
-  return [-x, y, z] as const;
-}
-
 function getSyncedOffsetSeconds(player: Tone.Player) {
   const duration = player.buffer.duration;
   if (!isFinite(duration) || duration <= 0) return 0;
@@ -223,7 +227,9 @@ function setListenerTransform(
   up: [number, number, number]
 ) {
   const { resonanceScene, listenerForward, listenerPosition } = getEngineState();
-  const [x, y, z] = mapThreeToResonance(position);
+  const x = -position[0];
+  const y = position[1];
+  const z = position[2];
   forwardVector.set(forward[0], forward[1], forward[2]);
   upVector.set(up[0], up[1], up[2]);
   listenerForward.copy(forwardVector).normalize();
@@ -386,25 +392,39 @@ function pruneTracks(validIds: string[]) {
     shadowOcclusionState.delete(id);
     trackDirectivityState.delete(id);
     trackPositions.delete(id);
+    pendingTrackPositions.delete(id);
     players.delete(id);
     sources.delete(id);
     trackNodes.delete(id);
   }
 }
 
-function setTrackPosition(trackId: string, position: [number, number, number]) {
-  const { listenerForward, listenerPosition } = getEngineState();
+function applyTrackPosition(
+  trackId: string,
+  position: { x: number; y: number; z: number }
+) {
+  if (!engineState) return;
+  const { listenerForward, listenerPosition, audioContext } = getEngineState();
   const source = sources.get(trackId);
   const nodes = trackNodes.get(trackId);
   if (!source || !nodes) return;
 
-  const [x, y, z] = mapThreeToResonance(position);
+  const x = -position.x;
+  const y = position.y;
+  const z = position.z;
   source.setPosition(x, y, z);
-  trackPositions.set(trackId, position);
+  const stored = trackPositions.get(trackId);
+  if (stored) {
+    stored[0] = position.x;
+    stored[1] = position.y;
+    stored[2] = position.z;
+  } else {
+    trackPositions.set(trackId, [position.x, position.y, position.z]);
+  }
 
-  const dx = position[0] - listenerPosition.x;
-  const dy = position[1] - listenerPosition.y;
-  const dz = position[2] - listenerPosition.z;
+  const dx = position.x - listenerPosition.x;
+  const dy = position.y - listenerPosition.y;
+  const dz = position.z - listenerPosition.z;
   const distance = Math.max(0.25, Math.sqrt(dx * dx + dy * dy + dz * dz));
 
   const rolloffFactor = 1;
@@ -417,7 +437,7 @@ function setTrackPosition(trackId: string, position: [number, number, number]) {
     : 20000;
   nodes.airFilter.frequency.setTargetAtTime(
     airCutoff,
-    getEngineState().audioContext.currentTime,
+    audioContext.currentTime,
     0.03
   );
   const baseCutoff = airAbsorptionEnabled ? airCutoff : 12000;
@@ -438,7 +458,7 @@ function setTrackPosition(trackId: string, position: [number, number, number]) {
     minBehindCutoff + frontBackFactor * (baseCutoff - minBehindCutoff);
   nodes.occlusionFilter.frequency.setTargetAtTime(
     targetOcclusionCutoff,
-    getEngineState().audioContext.currentTime,
+    audioContext.currentTime,
     0.05
   );
   nodes.occlusionFilter.Q.value = 0.7;
@@ -446,12 +466,39 @@ function setTrackPosition(trackId: string, position: [number, number, number]) {
   const roomHalfWidth = getEngineState().roomDimensions.width / 2;
   const roomHalfDepth = getEngineState().roomDimensions.depth / 2;
   const nearWallDistance = Math.min(
-    roomHalfWidth - Math.abs(position[0]),
-    roomHalfDepth - Math.abs(position[2])
+    roomHalfWidth - Math.abs(position.x),
+    roomHalfDepth - Math.abs(position.z)
   );
   // Keep subtle near-wall boost in level to emulate early reflections cheaply.
   const wallBoost = nearWallDistance < 1 ? (1 - Math.max(0, nearWallDistance)) * 0.12 : 0;
   nodes.distanceGain.gain.value = Math.min(1, nodes.distanceGain.gain.value + wallBoost);
+}
+
+function flushTrackPositions() {
+  trackPositionRafId = null;
+  if (pendingTrackPositions.size === 0) return;
+  pendingTrackPositions.forEach((position, trackId) => {
+    applyTrackPosition(trackId, position);
+  });
+  pendingTrackPositions.clear();
+}
+
+function setTrackPosition(trackId: string, position: [number, number, number]) {
+  const pending = pendingTrackPositions.get(trackId);
+  if (pending) {
+    pending.x = position[0];
+    pending.y = position[1];
+    pending.z = position[2];
+  } else {
+    pendingTrackPositions.set(trackId, {
+      x: position[0],
+      y: position[1],
+      z: position[2],
+    });
+  }
+  if (trackPositionRafId === null && typeof window !== "undefined") {
+    trackPositionRafId = window.requestAnimationFrame(flushTrackPositions);
+  }
 }
 
 function getTrackAcousticData(trackId: string): TrackAcousticData | null {
@@ -755,6 +802,11 @@ function disposeAudioEngine() {
   trackIds.clear();
   trackNodes.clear();
   trackPositions.clear();
+  pendingTrackPositions.clear();
+  if (trackPositionRafId !== null && typeof window !== "undefined") {
+    window.cancelAnimationFrame(trackPositionRafId);
+  }
+  trackPositionRafId = null;
   trackMixState.clear();
   shadowOcclusionState.clear();
   trackDirectivityState.clear();
@@ -839,6 +891,16 @@ function isTrackAudible(trackId: string) {
   return isPlaying && (hasSolo ? state.solo && !state.muted : !state.muted);
 }
 
+function getTrackLoadingState(trackIdList: string[]): TrackLoadingState {
+  const total = trackIdList.length;
+  if (total === 0) return { loaded: 0, total: 0 };
+  let loaded = 0;
+  for (const id of trackIdList) {
+    if (trackNodes.has(id)) loaded += 1;
+  }
+  return { loaded, total };
+}
+
 export {
   disposeAudioEngine,
   ensureTrackAudio,
@@ -854,6 +916,7 @@ export {
   updateTrackShadowOcclusion,
   isAudioPlaying,
   isTrackAudible,
+  getTrackLoadingState,
   readMasterLevel,
   getTransportSeconds,
   getMaxTrackDurationSeconds,

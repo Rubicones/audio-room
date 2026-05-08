@@ -7,6 +7,7 @@ import * as Tone from "tone";
 import {
   disposeAudioEngine,
   getTrackAcousticData,
+  getTrackLoadingState,
   type TrackAcousticData,
   toggleTransport,
   waitForToneLoaded,
@@ -20,6 +21,7 @@ import {
 import type { TrackConfig } from "@/components/canvas/types";
 import { PlayerBar } from "@/components/ui/PlayerBar";
 import { SketchSlider } from "@/components/ui/SketchSlider";
+import { Landing } from "./Landing";
 import styles from "./page.module.css";
 
 const PALETTE = ["#E16A6A", "#E5B94A", "#5BC489", "#7B5BE6", "#4A90E2", "#E07A5F"];
@@ -186,9 +188,10 @@ function HelpTooltip({ text }: { text: string }) {
 type SummaryItemProps = {
   label: string;
   value: string;
+  onCopy: (label: string, value: string) => void;
 };
 
-function SummaryItem({ label, value }: SummaryItemProps) {
+function SummaryItem({ label, value, onCopy }: SummaryItemProps) {
   return (
     <div className={styles.summaryRow}>
       <span className={styles.summaryKey}>{label}</span>
@@ -196,9 +199,9 @@ function SummaryItem({ label, value }: SummaryItemProps) {
       <button
         type="button"
         className={styles.copyBtn}
-        onClick={() => {
-          void navigator.clipboard.writeText(`${label}: ${value}`);
-        }}
+        aria-label={`Copy ${label}`}
+        title={`Copy ${label}`}
+        onClick={() => onCopy(label, value)}
       >
         copy
       </button>
@@ -206,17 +209,25 @@ function SummaryItem({ label, value }: SummaryItemProps) {
   );
 }
 
-function renderSummaryRows(data: TrackAcousticData) {
+function renderSummaryRows(
+  data: TrackAcousticData,
+  onCopy: (label: string, value: string) => void
+) {
   return (
     <>
       <SummaryItem
         label="Gain"
         value={Number.isFinite(data.gainDb) ? `${data.gainDb.toFixed(1)} dB` : "-inf dB"}
+        onCopy={onCopy}
       />
-      <SummaryItem label="Panning" value={data.panningText} />
-      <SummaryItem label="EQ/Filter" value={`${data.filterHz} Hz`} />
-      <SummaryItem label="Reverb Send" value={`${data.reverbSendPct}% wet / ${data.dryPct}% dry`} />
-      <SummaryItem label="Occluded" value={data.occluded ? "Yes" : "No"} />
+      <SummaryItem label="Panning" value={data.panningText} onCopy={onCopy} />
+      <SummaryItem label="EQ/Filter" value={`${data.filterHz} Hz`} onCopy={onCopy} />
+      <SummaryItem
+        label="Reverb Send"
+        value={`${data.reverbSendPct}% wet / ${data.dryPct}% dry`}
+        onCopy={onCopy}
+      />
+      <SummaryItem label="Occluded" value={data.occluded ? "Yes" : "No"} onCopy={onCopy} />
     </>
   );
 }
@@ -244,28 +255,23 @@ function MixerPage() {
   } = useTrackStore();
   const [view, setView] = useState<CameraView>("isometric");
   const [isPlaying, setIsPlaying] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [startMode, setStartMode] = useState<"clean" | "demo" | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [isBootReady, setIsBootReady] = useState(false);
+  const [transportLoading, setTransportLoading] = useState(false);
+  const [trackBuffersLoading, setTrackBuffersLoading] = useState(false);
+  const [demoQueued, setDemoQueued] = useState(false);
   const [isMobilePanelOpen, setIsMobilePanelOpen] = useState(false);
   const [zoomSteps, setZoomSteps] = useState(0);
   const [isNarrowScreen, setIsNarrowScreen] = useState(false);
   const [summaryTrackId, setSummaryTrackId] = useState<string | null>(null);
   const [expandedTrackIds, setExpandedTrackIds] = useState<Record<string, boolean>>({});
   const [liveTrackData, setLiveTrackData] = useState<Record<string, TrackAcousticData>>({});
+  const [copyToast, setCopyToast] = useState<string | null>(null);
+  const demoAutoStartedRef = useRef(false);
 
-  useEffect(() => {
-    const resumeAudioOnClick = () => {
-      if (Tone.getContext().state !== "running") {
-        void Tone.getContext().resume();
-      }
-    };
-    window.addEventListener("click", resumeAudioOnClick);
-
-    return () => {
-      window.removeEventListener("click", resumeAudioOnClick);
-      disposeAudioEngine();
-    };
-  }, []);
+  useEffect(() => () => disposeAudioEngine(), []);
 
   useEffect(() => {
     const updateScreen = () => setIsNarrowScreen(window.innerWidth <= 900);
@@ -275,6 +281,7 @@ function MixerPage() {
   }, []);
 
   useEffect(() => {
+    if (!hasStarted) return;
     let resolvedAssets = false;
     let resolvedTone = false;
 
@@ -321,7 +328,17 @@ function MixerPage() {
       DefaultLoadingManager.onLoad = previousOnLoad;
       DefaultLoadingManager.onError = previousOnError;
     };
-  }, []);
+  }, [hasStarted]);
+
+  const startApp = async (mode: "clean" | "demo") => {
+    await Tone.start();
+    setHasStarted(true);
+    setStartMode(mode);
+    if (mode === "demo") {
+      addTracks(buildDemoTracks(tracks.length));
+      setDemoQueued(true);
+    }
+  };
 
   const handleFileAdd = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -338,9 +355,37 @@ function MixerPage() {
   };
 
   const handlePlayToggle = async () => {
-    const playing = await toggleTransport();
-    setIsPlaying(playing);
+    setTransportLoading(true);
+    try {
+      const playing = await toggleTransport();
+      setIsPlaying(playing);
+    } finally {
+      setTransportLoading(false);
+    }
   };
+
+  useEffect(() => {
+    const ids = tracks.map((track) => track.id);
+    if (ids.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading when no tracks exist
+      setTrackBuffersLoading(false);
+      return;
+    }
+    const tick = () => {
+      const state = getTrackLoadingState(ids);
+      setTrackBuffersLoading(state.total > 0 && state.loaded < state.total);
+    };
+    tick();
+    const interval = window.setInterval(tick, 150);
+    return () => window.clearInterval(interval);
+  }, [tracks]);
+
+  useEffect(() => {
+    if (startMode !== "demo" || !demoQueued || !isBootReady || trackBuffersLoading) return;
+    if (demoAutoStartedRef.current || tracks.length === 0) return;
+    demoAutoStartedRef.current = true;
+    void handlePlayToggle();
+  }, [demoQueued, isBootReady, startMode, trackBuffersLoading, tracks.length]);
 
   useEffect(() => {
     const refresh = () => {
@@ -357,6 +402,23 @@ function MixerPage() {
   }, [tracks]);
 
   const summaryData = summaryTrackId ? (liveTrackData[summaryTrackId] ?? null) : null;
+  const summaryTrack = summaryTrackId
+    ? tracks.find((track) => track.id === summaryTrackId) ?? null
+    : null;
+  const summaryTrackNumber =
+    summaryTrackId != null ? tracks.findIndex((track) => track.id === summaryTrackId) + 1 : 0;
+  const playbackDisabled =
+    tracks.length === 0 || !isBootReady || trackBuffersLoading || transportLoading;
+
+  const handleSummaryCopy = async (label: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(`${label}: ${value}`);
+      setCopyToast(`${label} copied`);
+    } catch {
+      setCopyToast("copy failed");
+    }
+    window.setTimeout(() => setCopyToast(null), 1300);
+  };
 
   const sidebarContent = (
     <>
@@ -503,7 +565,8 @@ function MixerPage() {
 
         <PlayerBar
           isPlaying={isPlaying}
-          disabled={tracks.length === 0}
+          disabled={playbackDisabled}
+          loading={transportLoading || trackBuffersLoading || !isBootReady}
           onTogglePlay={handlePlayToggle}
         />
 
@@ -664,9 +727,17 @@ function MixerPage() {
     </>
   );
 
+  if (!hasStarted) {
+    return (
+      <main className={styles.page}>
+        <Landing onStartClean={() => void startApp("clean")} onStartDemo={() => void startApp("demo")} />
+      </main>
+    );
+  }
+
   return (
     <main className={styles.page}>
-      {!isBootReady ? (
+      {hasStarted && !isBootReady ? (
         <div className={styles.loadingScreen}>
           <h1>Sketching Spatial Lab</h1>
           <p>Loading assets and audio buffers... {loadingProgress}%</p>
@@ -749,7 +820,25 @@ function MixerPage() {
           className={`${styles.summaryDrawer} ${summaryTrackId ? styles.summaryDrawerOpen : ""}`}
         >
           <div className={styles.summaryHeader}>
-            <h3 className={styles.summaryTitle}>Settings Summary</h3>
+            <h3 className={styles.summaryTitle}>
+              {summaryTrack ? (
+                <span className={styles.summaryTrackTitle}>
+                  <span
+                    className={styles.summaryTrackDot}
+                    style={{ backgroundColor: summaryTrack.color }}
+                  />
+                  <span className={styles.summaryTrackPrefix}>{`Track #${summaryTrackNumber}:`}</span>
+                  <span
+                    className={styles.summaryTrackName}
+                    title={`Track #${summaryTrackNumber}: ${summaryTrack.name}`}
+                  >
+                    {summaryTrack.name}
+                  </span>
+                </span>
+              ) : (
+                "Settings Summary"
+              )}
+            </h3>
             <button
               type="button"
               className={styles.summaryClose}
@@ -760,12 +849,16 @@ function MixerPage() {
             </button>
           </div>
           {summaryTrackId && summaryData ? (
-            <div className={styles.summaryBody}>{renderSummaryRows(summaryData)}</div>
+            <div className={styles.summaryBody}>
+              {renderSummaryRows(summaryData, handleSummaryCopy)}
+            </div>
           ) : (
             <p className={styles.summaryEmpty}>Pick a track via the info button.</p>
           )}
         </aside>
       ) : null}
+
+      {copyToast ? <div className={styles.copyToast}>{copyToast}</div> : null}
 
       <div className={styles.zoomControls}>
         <button
