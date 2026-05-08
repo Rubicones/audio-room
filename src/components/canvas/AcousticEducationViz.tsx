@@ -21,7 +21,7 @@ const GAIN_EPSILON = 1e-4;
 
 const tempWorld = new Vector3();
 const tempListener = new Vector3();
-const sampleOffset = 0.18;
+const PENUMBRA_BASE = 0.22;
 
 function ringPointsXZ(
   radius: number,
@@ -129,6 +129,51 @@ function reflectVector(ix: number, iz: number, nx: number, nz: number) {
   const length = Math.hypot(rx, rz);
   if (length <= 1e-5) return { x: ix, z: iz };
   return { x: rx / length, z: rz / length };
+}
+
+function smoothstep(edge0: number, edge1: number, x: number) {
+  if (edge1 <= edge0) return x < edge0 ? 0 : 1;
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Continuous shadow clarity for source->listener path against a cylindrical obstacle.
+ * 1.0 = fully clear, 0.0 = fully blocked.
+ */
+function computeObstacleShadowClarity(
+  sx: number,
+  sz: number,
+  lx: number,
+  lz: number,
+  ox: number,
+  oz: number,
+  radius: number
+) {
+  const vx = lx - sx;
+  const vz = lz - sz;
+  const lenSq = vx * vx + vz * vz;
+  if (lenSq <= 1e-6) return 1;
+
+  const wx = ox - sx;
+  const wz = oz - sz;
+  const t = (wx * vx + wz * vz) / lenSq;
+  if (t <= 0.001 || t >= 0.999) return 1;
+
+  const cx = sx + vx * t;
+  const cz = sz + vz * t;
+  const clearance = Math.hypot(ox - cx, oz - cz);
+
+  const pathLength = Math.sqrt(lenSq);
+  const fullBlockRadius = radius * 0.85;
+  const penumbraRadius = radius + Math.min(0.95, PENUMBRA_BASE + pathLength * 0.08);
+  const blockedByClearance = 1 - smoothstep(fullBlockRadius, penumbraRadius, clearance);
+
+  // Fade hard blocking near segment endpoints for smoother diffraction-like behavior.
+  const edgeFade =
+    smoothstep(0.03, 0.15, t) * smoothstep(0.03, 0.15, 1 - t);
+  const blocked = Math.max(0, Math.min(1, blockedByClearance * edgeFade));
+  return 1 - blocked;
 }
 
 
@@ -638,16 +683,6 @@ export function AcousticEducationViz({
 }: AcousticEducationVizProps) {
   const fontUrl = useItimFontUrl();
 
-  const listenerSamples = useMemo<[number, number][]>(() => {
-    return [
-      [0, 0],
-      [sampleOffset, 0],
-      [-sampleOffset, 0],
-      [0, sampleOffset],
-      [0, -sampleOffset],
-    ];
-  }, []);
-
   useFrame(() => {
     const flags = flagsRef.current;
     if (!flags.shadows) return;
@@ -664,14 +699,16 @@ export function AcousticEducationViz({
       obj.getWorldPosition(tempWorld);
       const sx = tempWorld.x;
       const sz = tempWorld.z;
-      let blocked = 0;
-      for (const [dx, dz] of listenerSamples) {
-        const lx = tempListener.x + dx;
-        const lz = tempListener.z + dz;
-        if (inShadowWedge(lx, lz, sx, sz, ox, oz, OBSTACLE_RADIUS)) blocked += 1;
-      }
-      const occlusionFactor = 1 - blocked / listenerSamples.length;
-      updateTrackShadowOcclusion(t.id, occlusionFactor, materialAlpha);
+      const clarity = computeObstacleShadowClarity(
+        sx,
+        sz,
+        tempListener.x,
+        tempListener.z,
+        ox,
+        oz,
+        OBSTACLE_RADIUS
+      );
+      updateTrackShadowOcclusion(t.id, clarity, materialAlpha);
     }
   });
 

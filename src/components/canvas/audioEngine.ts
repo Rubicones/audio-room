@@ -316,6 +316,19 @@ async function ensureTrackAudio(track: Track) {
     occlusionFilter,
     shadowFilter,
   });
+  // Apply spatial/audio state immediately on decode so sources never start as
+  // temporary full-volume "center" playback before the next frame sync.
+  applyTrackPosition(track.id, {
+    x: track.position[0],
+    y: track.position[1],
+    z: track.position[2],
+  });
+  const rad = (track.rotationDeg * Math.PI) / 180;
+  setTrackDirectivityState(
+    track.id,
+    [Math.sin(rad), 0, -Math.cos(rad)],
+    track.isDirectivityEnabled
+  );
   refreshTrackMix();
 
   if (isPlaying) {
@@ -707,20 +720,20 @@ function setEducationalShadowEnabled(enabled: boolean) {
 
 function updateTrackShadowOcclusion(
   trackId: string,
-  occlusionFactor: number,
+  clarityFactor: number,
   materialAlpha: number
 ) {
   if (!educationalShadowsEnabled || !engineState) return;
   const nodes = trackNodes.get(trackId);
   if (!nodes) return;
-  const clampedOcclusion = Math.min(1, Math.max(0, occlusionFactor));
+  const clampedClarity = Math.min(1, Math.max(0, clarityFactor));
   const prev = shadowOcclusionState.get(trackId);
-  if (prev !== undefined && Math.abs(prev - clampedOcclusion) < 0.02) return;
-  shadowOcclusionState.set(trackId, clampedOcclusion);
+  if (prev !== undefined && Math.abs(prev - clampedClarity) < 0.005) return;
+  shadowOcclusionState.set(trackId, clampedClarity);
 
   const alpha = Math.min(1, Math.max(0, materialAlpha));
   const minFreq = 400 + (1 - alpha) * 1600;
-  const target = minFreq + clampedOcclusion * (20000 - minFreq);
+  const target = minFreq + clampedClarity * (20000 - minFreq);
   const t = engineState.audioContext.currentTime;
   nodes.shadowFilter.frequency.cancelScheduledValues(t);
   nodes.shadowFilter.frequency.setTargetAtTime(target, t, 0.1);
@@ -901,6 +914,10 @@ function getTrackLoadingState(trackIdList: string[]): TrackLoadingState {
   return { loaded, total };
 }
 
+function isTrackLoaded(trackId: string) {
+  return trackNodes.has(trackId);
+}
+
 export {
   disposeAudioEngine,
   ensureTrackAudio,
@@ -917,6 +934,7 @@ export {
   isAudioPlaying,
   isTrackAudible,
   getTrackLoadingState,
+  isTrackLoaded,
   readMasterLevel,
   getTransportSeconds,
   getMaxTrackDurationSeconds,

@@ -443,6 +443,12 @@
   opacity: 1;
 }
 
+.removeBtnDisabled,
+.removeBtnDisabled:hover {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
 .removeBtn:focus,
 .removeBtn:focus-visible {
   outline: none;

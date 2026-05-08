@@ -1,12 +1,13 @@
 "use client";
 
-import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { DefaultLoadingManager } from "three";
 import * as Tone from "tone";
 import {
   disposeAudioEngine,
   getTrackAcousticData,
+  isTrackLoaded,
   getTrackLoadingState,
   type TrackAcousticData,
   toggleTransport,
@@ -268,6 +269,7 @@ function MixerPage() {
   const [summaryTrackId, setSummaryTrackId] = useState<string | null>(null);
   const [expandedTrackIds, setExpandedTrackIds] = useState<Record<string, boolean>>({});
   const [liveTrackData, setLiveTrackData] = useState<Record<string, TrackAcousticData>>({});
+  const [trackLoadedMap, setTrackLoadedMap] = useState<Record<string, boolean>>({});
   const [copyToast, setCopyToast] = useState<string | null>(null);
   const demoAutoStartedRef = useRef(false);
 
@@ -335,6 +337,7 @@ function MixerPage() {
     setHasStarted(true);
     setStartMode(mode);
     if (mode === "demo") {
+      setTrackBuffersLoading(true);
       addTracks(buildDemoTracks(tracks.length));
       setDemoQueued(true);
     }
@@ -350,11 +353,14 @@ function MixerPage() {
       audioUrl: URL.createObjectURL(file),
     }));
 
+    setTrackBuffersLoading(true);
     addTracks(newTracks);
     event.currentTarget.value = "";
   };
 
-  const handlePlayToggle = async () => {
+  const handlePlayToggle = useCallback(async () => {
+    const loadingNow = getTrackLoadingState(tracks.map((track) => track.id));
+    if (loadingNow.total > 0 && loadingNow.loaded < loadingNow.total) return;
     setTransportLoading(true);
     try {
       const playing = await toggleTransport();
@@ -362,18 +368,24 @@ function MixerPage() {
     } finally {
       setTransportLoading(false);
     }
-  };
+  }, [tracks]);
 
   useEffect(() => {
     const ids = tracks.map((track) => track.id);
     if (ids.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading when no tracks exist
       setTrackBuffersLoading(false);
+      setTrackLoadedMap({});
       return;
     }
     const tick = () => {
       const state = getTrackLoadingState(ids);
       setTrackBuffersLoading(state.total > 0 && state.loaded < state.total);
+      const nextLoaded: Record<string, boolean> = {};
+      for (const id of ids) {
+        nextLoaded[id] = isTrackLoaded(id);
+      }
+      setTrackLoadedMap(nextLoaded);
     };
     tick();
     const interval = window.setInterval(tick, 150);
@@ -385,7 +397,7 @@ function MixerPage() {
     if (demoAutoStartedRef.current || tracks.length === 0) return;
     demoAutoStartedRef.current = true;
     void handlePlayToggle();
-  }, [demoQueued, isBootReady, startMode, trackBuffersLoading, tracks.length]);
+  }, [demoQueued, isBootReady, startMode, trackBuffersLoading, tracks.length, handlePlayToggle]);
 
   useEffect(() => {
     const refresh = () => {
@@ -620,10 +632,13 @@ function MixerPage() {
                 </button>
                 <button
                   type="button"
-                  className={styles.removeBtn}
+                  className={`${styles.removeBtn} ${
+                    !trackLoadedMap[track.id] ? styles.removeBtnDisabled : ""
+                  }`}
                   onClick={() => removeTrack(track.id)}
+                  disabled={!trackLoadedMap[track.id]}
                   aria-label={`Remove ${track.name}`}
-                  title="Remove track"
+                  title={!trackLoadedMap[track.id] ? "Wait until track loads" : "Remove track"}
                 >
                   ×
                 </button>
