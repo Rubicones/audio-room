@@ -261,6 +261,7 @@ function MixerPage() {
     setShowCriticalDistance,
     setTrackGainDb,
     toggleTrackDirectivity,
+    toggleTrackShadows,
     setTrackRotationDeg,
   } = useTrackStore();
   const [view, setView] = useState<CameraView>("isometric");
@@ -579,64 +580,66 @@ function MixerPage() {
 
       </section>
 
-      <section className={styles.section}>
-        <h2 className={styles.heading}>Columns</h2>
-        <button
-          type="button"
-          className={styles.columnAddBtn}
-          onClick={() => {
-            const id = addColumn();
-            setActiveColumnId(id);
-          }}
-        >
-          Add Column
-        </button>
-        <ul className={styles.columnList}>
-          {columns.map((column, index) => (
-            <li
-              key={column.id}
-              className={`${styles.columnRow} ${
-                activeColumnId === column.id ? styles.columnRowActive : ""
-              }`}
-              onPointerEnter={() => setActiveColumnId(column.id)}
-            >
-              <button
-                type="button"
-                className={styles.columnMeta}
-                onClick={() => setActiveColumnId(column.id)}
-                title={`Select column ${index + 1}`}
+      {acousticSettings.showAcousticShadows ? (
+        <section className={styles.section}>
+          <h2 className={styles.heading}>Columns</h2>
+          <button
+            type="button"
+            className={styles.columnAddBtn}
+            onClick={() => {
+              const id = addColumn();
+              setActiveColumnId(id);
+            }}
+          >
+            Add Column
+          </button>
+          <ul className={styles.columnList}>
+            {columns.map((column, index) => (
+              <li
+                key={column.id}
+                className={`${styles.columnRow} ${
+                  activeColumnId === column.id ? styles.columnRowActive : ""
+                }`}
+                onPointerEnter={() => setActiveColumnId(column.id)}
               >
-                <span
-                  className={styles.columnColorDot}
+                <button
+                  type="button"
+                  className={styles.columnMeta}
+                  onClick={() => setActiveColumnId(column.id)}
+                  title={`Select column ${index + 1}`}
+                >
+                  <span
+                    className={styles.columnColorDot}
+                    style={{ backgroundColor: column.color }}
+                  />
+                  <span className={styles.columnName}>{`Column ${index + 1}`}</span>
+                </button>
+                <div
+                  className={styles.columnColorBadge}
                   style={{ backgroundColor: column.color }}
-                />
-                <span className={styles.columnName}>{`Column ${index + 1}`}</span>
-              </button>
-              <div
-                className={styles.columnColorBadge}
-                style={{ backgroundColor: column.color }}
-                title={`Color for column ${index + 1}`}
-              >
-                <input
-                  type="color"
-                  className={styles.columnColorInputNative}
-                  aria-label={`Color for column ${index + 1}`}
-                  value={column.color}
-                  onChange={(e) => updateColumn(column.id, { color: e.target.value })}
-                />
-              </div>
-              <button
-                type="button"
-                className={styles.columnDeleteBtn}
-                aria-label={`Delete column ${index + 1}`}
-                onClick={() => removeColumn(column.id)}
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
+                  title={`Color for column ${index + 1}`}
+                >
+                  <input
+                    type="color"
+                    className={styles.columnColorInputNative}
+                    aria-label={`Color for column ${index + 1}`}
+                    value={column.color}
+                    onChange={(e) => updateColumn(column.id, { color: e.target.value })}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className={styles.columnDeleteBtn}
+                  aria-label={`Delete column ${index + 1}`}
+                  onClick={() => removeColumn(column.id)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className={styles.section}>
         <h2 className={styles.heading}>Tracks</h2>
@@ -720,6 +723,20 @@ function MixerPage() {
                   formatValue={(v) => (v <= -60 ? "-inf dB" : `${v >= 0 ? "+" : ""}${v} dB`)}
                 />
               </div>
+              {acousticSettings.showAcousticShadows ? (
+                <div className={styles.trackDirectivityRow}>
+                  <span className={styles.trackDirectivityLabel}>show shadows</span>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${track.showShadows ? styles.toggleOn : ""}`}
+                    onClick={() => toggleTrackShadows(track.id)}
+                    aria-label={`Toggle acoustic shadows for ${track.name}`}
+                    title="Show acoustic shadows from this source"
+                  >
+                    {track.showShadows ? "on" : "off"}
+                  </button>
+                </div>
+              ) : null}
               <div className={styles.trackDirectivityRow}>
                 <span className={styles.trackDirectivityLabel}>direction</span>
                 <button

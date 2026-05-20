@@ -40,6 +40,7 @@ type TrackLite = {
   gainDb: number;
   isDirectivityEnabled: boolean;
   rotationDeg: number;
+  showShadows: boolean;
 };
 
 type EduFlags = {
@@ -104,6 +105,7 @@ function SceneContents({ view, zoomSteps, onActiveColumnChange }: SceneContentsP
       gainDb: t.gainDb,
       isDirectivityEnabled: t.isDirectivityEnabled,
       rotationDeg: t.rotationDeg,
+      showShadows: t.showShadows,
     }));
     gainDbMapRef.current = new Map(
       tracks.map((track) => [track.id, Number.isFinite(track.gainDb) ? track.gainDb : -Infinity])
@@ -266,6 +268,7 @@ function SceneContents({ view, zoomSteps, onActiveColumnChange }: SceneContentsP
           gainDb: t.gainDb,
           isDirectivityEnabled: t.isDirectivityEnabled,
           rotationDeg: t.rotationDeg,
+          showShadows: t.showShadows,
         }))}
         listenerRef={listenerRef}
         trackRefs={trackRefs}

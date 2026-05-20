@@ -41,6 +41,7 @@ type TrackStoreValue = {
   setShowCriticalDistance: (enabled: boolean) => void;
   setTrackGainDb: (trackId: string, gainDb: number) => void;
   toggleTrackDirectivity: (trackId: string) => void;
+  toggleTrackShadows: (trackId: string) => void;
   setTrackRotationDeg: (trackId: string, value: number) => void;
   addColumn: (position?: Vec3) => string;
   removeColumn: (columnId: string) => void;
@@ -56,8 +57,8 @@ function randomSpawnPosition(): Vec3 {
   return [x, 0.5, z];
 }
 
-function createTrack(config: TrackConfig): Track {
-  const { gainDb: _g, isDirectivityEnabled, rotationDeg, ...rest } = config;
+function createTrack(config: TrackConfig, trackIndex: number): Track {
+  const { gainDb: _g, isDirectivityEnabled, rotationDeg, showShadows, ...rest } = config;
   const normalizedRotation = Number.isFinite(rotationDeg)
     ? ((((Math.round(rotationDeg as number) % 360) + 360) % 360) as number)
     : 0;
@@ -70,6 +71,7 @@ function createTrack(config: TrackConfig): Track {
     gainDb: Number.isFinite(config.gainDb) ? (config.gainDb as number) : 0,
     isDirectivityEnabled: Boolean(isDirectivityEnabled),
     rotationDeg: normalizedRotation,
+    showShadows: typeof showShadows === "boolean" ? showShadows : trackIndex === 0,
   };
 }
 
@@ -94,10 +96,13 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
       columns,
       acousticSettings,
       addTracks: (configs) => {
-        setTracks((current) => [
-          ...current,
-          ...configs.map((config) => createTrack(config)),
-        ]);
+        setTracks((current) => {
+          const startIndex = current.length;
+          return [
+            ...current,
+            ...configs.map((config, idx) => createTrack(config, startIndex + idx)),
+          ];
+        });
       },
       removeTrack: (trackId) => {
         setTracks((current) => current.filter((track) => track.id !== trackId));
@@ -170,6 +175,13 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
             track.id === trackId
               ? { ...track, isDirectivityEnabled: !track.isDirectivityEnabled }
               : track
+          )
+        );
+      },
+      toggleTrackShadows: (trackId) => {
+        setTracks((current) =>
+          current.map((track) =>
+            track.id === trackId ? { ...track, showShadows: !track.showShadows } : track
           )
         );
       },

@@ -239,7 +239,7 @@ function buildConeHatchSegmentPoints(
   return out;
 }
 
-function darkenHex(hex: string, factor = 0.9) {
+function darkenHex(hex: string, factor = 1) {
   const normalized = hex.trim().replace(/^#/, "");
   const short = /^[0-9a-fA-F]{3}$/;
   const long = /^[0-9a-fA-F]{6}$/;
@@ -266,6 +266,7 @@ type TrackLite = {
   gainDb: number;
   isDirectivityEnabled: boolean;
   rotationDeg: number;
+  showShadows: boolean;
 };
 
 type Flags = {
@@ -477,14 +478,12 @@ function CriticalDistanceRing({
 
 function ShadowHatch({
   sourceTrackId,
-  fallbackTrackId,
   column,
   trackRefs,
   flagsRef,
   roomRef,
 }: {
-  sourceTrackId: string | null;
-  fallbackTrackId: string | null;
+  sourceTrackId: string;
   column: AcousticColumn;
   trackRefs: RefObject<Map<string, Object3D>>;
   flagsRef: MutableRefObject<Flags>;
@@ -505,8 +504,7 @@ function ShadowHatch({
     g.visible = flagsRef.current.shadows;
     if (!flagsRef.current.shadows) return;
 
-    const trackId = sourceTrackId ?? fallbackTrackId;
-    if (!trackId) return;
+    const trackId = sourceTrackId;
     const obj = trackRefs.current?.get(trackId);
     if (!obj) return;
 
@@ -527,7 +525,7 @@ function ShadowHatch({
     if (key === lastKey.current) return;
     lastKey.current = key;
     lastUpdateMs.current = now;
-    const nextOpacity = Math.min(1, Math.max(0.08, 1 - roomRef.current.materialAlpha));
+    const nextOpacity = Math.min(1, Math.max(0.08, roomRef.current.materialAlpha));
     setHatchOpacity((current) =>
       Math.abs(current - nextOpacity) > 0.02 ? nextOpacity : current
     );
@@ -555,7 +553,7 @@ function ShadowHatch({
         dashSize={0.12}
         gapSize={0.09}
         transparent
-        opacity={hatchOpacity * 0.5}
+        opacity={hatchOpacity * 0.72}
         depthWrite={false}
       />
     </group>
@@ -718,7 +716,8 @@ export function AcousticEducationViz({
     if (!listener) return;
     listener.getWorldPosition(tempListener);
     const materialAlpha = roomRef.current.materialAlpha;
-    const fallbackTrackId = tracksRef.current[0]?.id ?? null;
+    const fallbackTrackId =
+      tracksRef.current.find((track) => track.showShadows)?.id ?? tracksRef.current[0]?.id ?? null;
     const activeTrackId = activeSourceTrackId ?? fallbackTrackId;
     const frameOccluderCounts = frameOccluderCountByTrackRef.current;
     frameOccluderCounts.clear();
@@ -833,23 +832,26 @@ export function AcousticEducationViz({
     }
   });
 
-  const fallbackTrackId = tracks[0]?.id ?? null;
+  const alwaysVisibleShadowTrackIds = tracks
+    .filter((track) => track.showShadows)
+    .map((track) => track.id);
 
   return (
     <group>
       {showShadows && columns.length > 0 ? (
         <>
-          {columns.map((column) => (
-            <ShadowHatch
-              key={`column-shadow-${column.id}`}
-              sourceTrackId={activeSourceTrackId}
-              fallbackTrackId={fallbackTrackId}
-              column={column}
-              trackRefs={trackRefs}
-              flagsRef={flagsRef}
-              roomRef={roomRef}
-            />
-          ))}
+          {alwaysVisibleShadowTrackIds.flatMap((trackId) =>
+            columns.map((column) => (
+              <ShadowHatch
+                key={`column-shadow-${column.id}-${trackId}`}
+                sourceTrackId={trackId}
+                column={column}
+                trackRefs={trackRefs}
+                flagsRef={flagsRef}
+                roomRef={roomRef}
+              />
+            ))
+          )}
         </>
       ) : null}
       {tracks.map((t) => (

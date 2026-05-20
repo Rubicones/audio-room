@@ -1,4 +1,4 @@
-import { Billboard, Line, Text, useTexture } from "@react-three/drei";
+import { Billboard, Html, Line, Text } from "@react-three/drei";
 import { useMemo, useRef, useState } from "react";
 import { type ThreeEvent } from "@react-three/fiber";
 import {
@@ -63,18 +63,23 @@ type TrackNodesProps = {
 };
 
 function ListenerHeadphones() {
-  const iconTexture = useTexture("/headphones.svg");
-
   return (
     <Billboard>
-      <mesh position={[0, 0.02, 0]}>
-        <planeGeometry args={[0.92, 0.9]} />
-        <meshBasicMaterial
-          map={iconTexture}
-          transparent
-          toneMapped={false}
+      <Html
+        transform
+        position={[0, 0.02, 0]}
+        sprite
+        distanceFactor={7}
+        style={{ pointerEvents: "none" }}
+      >
+        <img
+          src="/headphones.svg"
+          alt=""
+          width={26}
+          height={25}
+          style={{ display: "block" }}
         />
-      </mesh>
+      </Html>
     </Billboard>
   );
 }

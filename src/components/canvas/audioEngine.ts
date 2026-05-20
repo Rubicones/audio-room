@@ -104,6 +104,7 @@ const trackDirectivityState = new Map<
 let isPlaying = false;
 let airAbsorptionEnabled = false;
 let globalPlaybackStartTime = 0;
+let pausedTransportSeconds = 0;
 let trackPositionRafId: number | null = null;
 
 const forwardVector = new Vector3();
@@ -1080,6 +1081,8 @@ async function toggleTransport() {
   Tone.Destination.volume.value = 0;
 
   if (isPlaying) {
+    const pauseAt = Math.max(0, Tone.Transport.seconds);
+    pausedTransportSeconds = pauseAt;
     players.forEach((player) => {
       try {
         player.stop();
@@ -1088,16 +1091,21 @@ async function toggleTransport() {
       }
     });
     Tone.Transport.stop();
+    Tone.Transport.seconds = pauseAt;
     isPlaying = false;
-    globalPlaybackStartTime = 0;
+    globalPlaybackStartTime = getEngineState().audioContext.currentTime - pauseAt;
     return false;
   }
 
+  const resumeAt = Math.max(0, pausedTransportSeconds);
   const startAt = Tone.now() + 0.05;
-  globalPlaybackStartTime = getEngineState().audioContext.currentTime + 0.05;
+  globalPlaybackStartTime = getEngineState().audioContext.currentTime + 0.05 - resumeAt;
+  Tone.Transport.seconds = resumeAt;
   players.forEach((player) => {
     try {
-      player.start(startAt, 0);
+      const duration = player.buffer?.duration ?? 0;
+      const offset = duration > 0 ? resumeAt % duration : 0;
+      player.start(startAt, offset);
     } catch {
       // no-op
     }
@@ -1112,6 +1120,7 @@ function disposeAudioEngine() {
   engineState.safetyLimiter.disconnect();
   isPlaying = false;
   globalPlaybackStartTime = 0;
+  pausedTransportSeconds = 0;
   for (const player of players.values()) player.dispose();
   for (const nodes of trackNodes.values()) {
     nodes.uiGain.disconnect();
@@ -1197,6 +1206,7 @@ function seekTransport(seconds: number) {
   }
 
   Tone.Transport.seconds = safe;
+  pausedTransportSeconds = safe;
 
   if (wasPlaying) {
     const startAt = Tone.now() + 0.03;
@@ -1214,7 +1224,7 @@ function seekTransport(seconds: number) {
     isPlaying = true;
   } else {
     isPlaying = false;
-    globalPlaybackStartTime = 0;
+    globalPlaybackStartTime = engineState.audioContext.currentTime - safe;
   }
 }
 

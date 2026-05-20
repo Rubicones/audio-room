@@ -78,6 +78,7 @@ export type TrackConfig = {
   gainDb?: number;
   isDirectivityEnabled?: boolean;
   rotationDeg?: number;
+  showShadows?: boolean;
 };
 
 export type Track = Omit<TrackConfig, "gainDb"> & {
@@ -88,6 +89,7 @@ export type Track = Omit<TrackConfig, "gainDb"> & {
   gainDb: number;
   isDirectivityEnabled: boolean;
   rotationDeg: number;
+  showShadows: boolean;
 };
 
 export interface AcousticColumn {
