@@ -1,4 +1,5 @@
 import { Itim } from "next/font/google";
+import { AuthStoreProvider } from "@/components/auth/AuthStore";
 import "./globals.css";
 
 const itim = Itim({
@@ -77,7 +78,9 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en" className={itim.variable}>
-      <body>{children}</body>
+      <body>
+        <AuthStoreProvider>{children}</AuthStoreProvider>
+      </body>
     </html>
   );
 }

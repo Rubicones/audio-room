@@ -71,12 +71,15 @@ export type ResonanceMaterialId =
   (typeof MATERIAL_REGISTRY)[RoomMaterialKey]["idReal"];
 
 export type TrackConfig = {
+  id?: string;
   name: string;
   color: string;
   audioUrl: string;
   /** dB offset for inverse-square zone visualization (0 = reference). */
   gainDb?: number;
   isDirectivityEnabled?: boolean;
+  directivityAlpha?: number;
+  directivitySharpness?: number;
   rotationDeg?: number;
   showShadows?: boolean;
 };
@@ -88,6 +91,8 @@ export type Track = Omit<TrackConfig, "gainDb"> & {
   solo: boolean;
   gainDb: number;
   isDirectivityEnabled: boolean;
+  directivityAlpha: number;
+  directivitySharpness: number;
   rotationDeg: number;
   showShadows: boolean;
 };

@@ -33,6 +33,7 @@ type TrackStoreValue = {
   updateTrackPosition: (trackId: string, position: Vec3) => void;
   updateTrackName: (trackId: string, name: string) => void;
   updateTrackColor: (trackId: string, color: string) => void;
+  updateTrackAudioUrl: (trackId: string, audioUrl: string) => void;
   toggleTrackMute: (trackId: string) => void;
   toggleTrackSolo: (trackId: string) => void;
   setRoomScale: (scale: RoomScale) => void;
@@ -51,9 +52,26 @@ type TrackStoreValue = {
   addObstacle: (position?: Vec3, type?: ObstacleType) => string;
   removeObstacle: (obstacleId: string) => void;
   updateObstacle: (obstacleId: string, updates: Partial<AcousticObstacle>) => void;
+  replaceProjectState: (state: {
+    tracks: Track[];
+    roomScale: RoomScale;
+    obstacles: AcousticObstacle[];
+    acousticSettings: Partial<AcousticSettings>;
+  }) => void;
+  resetProjectState: () => void;
 };
 
 const TrackStoreContext = createContext<TrackStoreValue | null>(null);
+const DEFAULT_ROOM_SCALE: RoomScale = [1, 1, 1];
+const DEFAULT_ACOUSTIC_SETTINGS: AcousticSettings = {
+  roomMaterial: "brick",
+  enableRoomReverb: true,
+  enableAirAbsorption: false,
+  rt60Ms: 850,
+  showAttenuationZones: false,
+  showAcousticShadows: false,
+  showCriticalDistance: false,
+};
 
 function randomSpawnPosition(): Vec3 {
   const range = 3.8;
@@ -63,18 +81,37 @@ function randomSpawnPosition(): Vec3 {
 }
 
 function createTrack(config: TrackConfig, trackIndex: number): Track {
-  const { gainDb: _g, isDirectivityEnabled, rotationDeg, showShadows, ...rest } = config;
+  const {
+    gainDb: _g,
+    isDirectivityEnabled,
+    directivityAlpha,
+    directivitySharpness,
+    rotationDeg,
+    showShadows,
+    ...rest
+  } = config;
   const normalizedRotation = Number.isFinite(rotationDeg)
     ? ((((Math.round(rotationDeg as number) % 360) + 360) % 360) as number)
     : 0;
+  const directivityEnabled = Boolean(isDirectivityEnabled);
+  const alpha = Number.isFinite(directivityAlpha)
+    ? Math.max(0, Math.min(1, directivityAlpha as number))
+    : directivityEnabled
+      ? 0.5
+      : 0;
+  const sharpness = Number.isFinite(directivitySharpness)
+    ? Math.max(0, Math.min(1, directivitySharpness as number))
+    : 1;
   return {
     ...rest,
-    id: crypto.randomUUID(),
+    id: config.id ?? crypto.randomUUID(),
     position: randomSpawnPosition(),
     muted: false,
     solo: false,
     gainDb: Number.isFinite(config.gainDb) ? (config.gainDb as number) : 0,
-    isDirectivityEnabled: Boolean(isDirectivityEnabled),
+    isDirectivityEnabled: directivityEnabled,
+    directivityAlpha: alpha,
+    directivitySharpness: sharpness,
     rotationDeg: normalizedRotation,
     showShadows: typeof showShadows === "boolean" ? showShadows : trackIndex === 0,
   };
@@ -82,17 +119,11 @@ function createTrack(config: TrackConfig, trackIndex: number): Track {
 
 export function TrackStoreProvider({ children }: { children: ReactNode }) {
   const [tracks, setTracks] = useState<Track[]>([]);
-  const [roomScale, setRoomScale] = useState<RoomScale>([1, 1, 1]);
+  const [roomScale, setRoomScale] = useState<RoomScale>(DEFAULT_ROOM_SCALE);
   const [obstacles, setObstacles] = useState<AcousticObstacle[]>([createDefaultObstacle(0)]);
-  const [acousticSettings, setAcousticSettings] = useState<AcousticSettings>({
-    roomMaterial: "brick",
-    enableRoomReverb: true,
-    enableAirAbsorption: false,
-    rt60Ms: 850,
-    showAttenuationZones: false,
-    showAcousticShadows: false,
-    showCriticalDistance: false,
-  });
+  const [acousticSettings, setAcousticSettings] = useState<AcousticSettings>(
+    DEFAULT_ACOUSTIC_SETTINGS
+  );
 
   const value = useMemo<TrackStoreValue>(
     () => ({
@@ -125,6 +156,11 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
       updateTrackColor: (trackId, color) => {
         setTracks((current) =>
           current.map((track) => (track.id === trackId ? { ...track, color } : track))
+        );
+      },
+      updateTrackAudioUrl: (trackId, audioUrl) => {
+        setTracks((current) =>
+          current.map((track) => (track.id === trackId ? { ...track, audioUrl } : track))
         );
       },
       toggleTrackMute: (trackId) => {
@@ -178,7 +214,15 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
         setTracks((current) =>
           current.map((track) =>
             track.id === trackId
-              ? { ...track, isDirectivityEnabled: !track.isDirectivityEnabled }
+              ? {
+                  ...track,
+                  isDirectivityEnabled: !track.isDirectivityEnabled,
+                  directivityAlpha: !track.isDirectivityEnabled
+                    ? track.directivityAlpha > 0
+                      ? track.directivityAlpha
+                      : 0.5
+                    : 0,
+                }
               : track
           )
         );
@@ -244,6 +288,21 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
             };
           })
         );
+      },
+      replaceProjectState: (state) => {
+        setTracks(state.tracks);
+        setRoomScale(state.roomScale);
+        setObstacles(state.obstacles);
+        setAcousticSettings((current) => ({
+          ...current,
+          ...state.acousticSettings,
+        }));
+      },
+      resetProjectState: () => {
+        setTracks([]);
+        setRoomScale(DEFAULT_ROOM_SCALE);
+        setObstacles([createDefaultObstacle(0)]);
+        setAcousticSettings(DEFAULT_ACOUSTIC_SETTINGS);
       },
     }),
     [tracks, roomScale, obstacles, acousticSettings]

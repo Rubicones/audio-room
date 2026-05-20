@@ -26,12 +26,16 @@ import { TrackNodes } from "./TrackNodes";
 type SceneContentsProps = {
   view: CameraView;
   zoomSteps: number;
+  listenerPosition: [number, number, number];
+  onListenerPositionChange: (position: [number, number, number]) => void;
   onActiveObstacleChange?: (obstacleId: string | null) => void;
 };
 
 type SceneCanvasProps = {
   view: CameraView;
   zoomSteps: number;
+  listenerPosition: [number, number, number];
+  onListenerPositionChange: (position: [number, number, number]) => void;
   onActiveObstacleChange?: (obstacleId: string | null) => void;
 };
 
@@ -39,6 +43,8 @@ type TrackLite = {
   id: string;
   gainDb: number;
   isDirectivityEnabled: boolean;
+  directivityAlpha: number;
+  directivitySharpness: number;
   rotationDeg: number;
   showShadows: boolean;
 };
@@ -57,7 +63,13 @@ type RoomDims = {
   materialAlpha: number;
 };
 
-function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContentsProps) {
+function SceneContents({
+  view,
+  zoomSteps,
+  listenerPosition,
+  onListenerPositionChange,
+  onActiveObstacleChange,
+}: SceneContentsProps) {
   const {
     tracks,
     roomScale,
@@ -77,14 +89,12 @@ function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContent
   const trackPositionTuple = useRef<[number, number, number]>([0, 0, 0]);
   const directivityTuple = useRef<[number, number, number]>([0, 0, -1]);
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
-  const [listenerPosition, setListenerPosition] = useState<[number, number, number]>([0, 0.5, 0]);
-
   const listenerRef = useRef<Object3D | null>(null);
   const trackRefs = useRef<Map<string, Object3D>>(new Map());
   const tracksRef = useRef<TrackLite[]>([]);
   const gainDbMapRef = useRef<Map<string, number>>(new Map());
   const directivityMapRef = useRef<
-    Map<string, { enabled: boolean; rotationDeg: number }>
+    Map<string, { enabled: boolean; alpha: number; sharpness: number; rotationDeg: number }>
   >(new Map());
   const flagsRef = useRef<EduFlags>({
     attenuation: false,
@@ -105,6 +115,8 @@ function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContent
       id: t.id,
       gainDb: t.gainDb,
       isDirectivityEnabled: t.isDirectivityEnabled,
+      directivityAlpha: t.directivityAlpha,
+      directivitySharpness: t.directivitySharpness,
       rotationDeg: t.rotationDeg,
       showShadows: t.showShadows,
     }));
@@ -116,6 +128,8 @@ function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContent
         track.id,
         {
           enabled: track.isDirectivityEnabled,
+          alpha: track.directivityAlpha,
+          sharpness: track.directivitySharpness,
           rotationDeg: track.rotationDeg,
         },
       ])
@@ -212,7 +226,9 @@ function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContent
       setTrackDirectivityState(
         trackId,
         directivityTuple.current,
-        directivity?.enabled ?? false
+        directivity?.enabled ?? false,
+        directivity?.alpha,
+        directivity?.sharpness
       );
     });
   });
@@ -256,7 +272,7 @@ function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContent
         tracks={tracks}
         roomScale={roomScale}
         onTrackDragCommit={onTrackDragCommit}
-        onListenerDragCommit={setListenerPosition}
+        onListenerDragCommit={onListenerPositionChange}
         listenerPosition={listenerPosition}
         onListenerRef={(object) => {
           listenerRef.current = object;
@@ -270,6 +286,8 @@ function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContent
           id: t.id,
           gainDb: t.gainDb,
           isDirectivityEnabled: t.isDirectivityEnabled,
+          directivityAlpha: t.directivityAlpha,
+          directivitySharpness: t.directivitySharpness,
           rotationDeg: t.rotationDeg,
           showShadows: t.showShadows,
         }))}
@@ -290,7 +308,13 @@ function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContent
   );
 }
 
-export function SceneCanvas({ view, zoomSteps, onActiveObstacleChange }: SceneCanvasProps) {
+export function SceneCanvas({
+  view,
+  zoomSteps,
+  listenerPosition,
+  onListenerPositionChange,
+  onActiveObstacleChange,
+}: SceneCanvasProps) {
   return (
     <Canvas
       flat
@@ -308,6 +332,8 @@ export function SceneCanvas({ view, zoomSteps, onActiveObstacleChange }: SceneCa
       <SceneContents
         view={view}
         zoomSteps={zoomSteps}
+        listenerPosition={listenerPosition}
+        onListenerPositionChange={onListenerPositionChange}
         onActiveObstacleChange={onActiveObstacleChange}
       />
     </Canvas>

@@ -32,6 +32,201 @@
   font-family: inherit;
 }
 
+.workspaceHeader {
+  position: absolute;
+  top: 16px;
+  left: 50px;
+  right: 28px;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.workspaceBrand {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 32px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  text-transform: lowercase;
+  color: var(--ink, #1a1a1a);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.profileWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.syncStatus {
+  font-size: 12px;
+  color: rgba(26, 26, 26, 0.65);
+  min-width: 56px;
+  text-align: right;
+}
+
+.profileAvatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 2px solid var(--ink, #1a1a1a);
+  background: #ffffff;
+  color: var(--ink, #1a1a1a);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+  position: relative;
+}
+
+.profileAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profileAvatar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.profileAvatar span {
+  font-size: 14px;
+}
+
+.profileMenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(260px, 70vw);
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  box-shadow: 0 10px 24px rgba(10, 10, 10, 0.08);
+  max-height: min(70svh, 460px);
+  overflow-y: auto;
+}
+
+.profileEmail {
+  font-size: 12px;
+  opacity: 0.82;
+  overflow-wrap: anywhere;
+}
+
+.profileAction,
+.profileDanger {
+  min-height: 44px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--ink, #1a1a1a);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.profileDanger {
+  background: var(--ink, #1a1a1a);
+  color: #ffffff;
+}
+
+.profilePasswordRow {
+  display: grid;
+  gap: 6px;
+}
+
+.profilePasswordInput {
+  min-height: 44px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0 8px;
+  font-family: inherit;
+  outline: none;
+}
+
+.profileError {
+  font-size: 12px;
+  color: #a12020;
+}
+
+.demoBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(26, 26, 26, 0.2);
+  background: rgba(26, 26, 26, 0.08);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.panelDashboard {
+  width: min(900px, calc(100vw - 48px));
+  margin: 80px auto 0;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.dashboardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.dashboardTitle {
+  font-size: 24px;
+  font-weight: 400;
+}
+
+.projectsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.projectCard {
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px;
+  text-align: left;
+  display: grid;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.projectCardTitle {
+  font-size: 15px;
+}
+
+.projectCardMeta {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
 .viewBtn {
   display: inline-flex;
   align-items: center;
@@ -65,10 +260,10 @@
 .sidebar {
   position: absolute;
   z-index: 10;
-  top: 28px;
+  top: 74px;
   left: 28px;
   width: 320px;
-  max-height: calc(100vh - 56px);
+  max-height: calc(100vh - 102px);
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
@@ -77,8 +272,9 @@
   padding: 20px 22px;
   background: #ffffff;
   border: 2px solid var(--ink, #1a1a1a);
-  border-radius: 12px;
+  border-radius: 16px;
   font-family: inherit;
+  box-shadow: 0 10px 26px rgba(10, 10, 10, 0.06);
 }
 
 .sidebar::-webkit-scrollbar {
@@ -298,8 +494,8 @@
   grid-template-columns: 1fr auto auto;
   align-items: start;
   gap: 8px;
-  border: 1px solid rgba(26, 26, 26, 0.22);
-  border-radius: 8px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 12px;
   padding: 6px 8px;
   background: #ffffff;
 }
@@ -696,6 +892,38 @@
   font-family: inherit;
 }
 
+.appInitializing {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.appInitializing p {
+  font-size: 13px;
+  color: rgba(26, 26, 26, 0.7);
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid rgba(26, 26, 26, 0.2);
+  border-top-color: rgba(26, 26, 26, 0.9);
+  animation: appSpin 700ms linear infinite;
+  justify-self: center;
+}
+
+@keyframes appSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .loadingScreen h1 {
   font-size: 22px;
   font-weight: 400;
@@ -725,8 +953,8 @@
 }
 
 .zoomBtn {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   border: 2px solid var(--ink, #1a1a1a);
   border-radius: 10px;
   background: #ffffff;
@@ -963,6 +1191,19 @@
 }
 
 @media (max-width: 900px) {
+  .workspaceHeader {
+    left: calc(12px + env(safe-area-inset-left));
+    right: calc(12px + env(safe-area-inset-right));
+  }
+
+  .profileWrap {
+    gap: 6px;
+  }
+
+  .syncStatus {
+    display: none;
+  }
+
   .sidebar {
     display: none;
   }
@@ -976,11 +1217,11 @@
 
   .settingsGear {
     position: absolute;
-    top: calc(12px + env(safe-area-inset-top));
+    top: calc(60px + env(safe-area-inset-top));
     right: calc(12px + env(safe-area-inset-right));
     z-index: 15;
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     border: 2px solid var(--ink, #1a1a1a);
     border-radius: 10px;
     background: #ffffff;
@@ -1022,9 +1263,11 @@
     top: 8px;
     left: 8px;
     right: 8px;
-    bottom: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
     border-radius: 14px;
     padding-top: 48px;
+    max-height: calc(100svh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow-y: auto;
   }
 
   .mobileClose {
@@ -1051,7 +1294,6 @@
     outline: none;
   }
 
-  .helpTrigger,
   .summaryClose,
   .copyBtn,
   .toggle {
@@ -1061,10 +1303,20 @@
 
   .helpTrigger,
   .summaryBtn {
-    width: 24px;
-    height: 24px;
-    min-width: 24px;
-    min-height: 24px;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .circleBtn,
+  .columnDeleteBtn,
+  .columnColorBadge,
+  .profileAvatar,
+  .mobileClose,
+  .zoomBtn,
+  .settingsGear,
+  .removeBtn {
+    min-width: 36px;
+    min-height: 36px;
   }
 
   .summaryOverlay {

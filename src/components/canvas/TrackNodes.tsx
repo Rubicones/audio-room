@@ -1,5 +1,5 @@
 import { Billboard, Html, Line, Text } from "@react-three/drei";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { type ThreeEvent } from "@react-three/fiber";
 import {
@@ -332,11 +332,11 @@ export function TrackNodes({
     listenerGroupRef.current.position.set(tempPoint.x, tempPoint.y, tempPoint.z);
   };
 
-  const commitListenerDrag = () => {
+  const commitListenerDrag = useCallback(() => {
     const group = listenerGroupRef.current;
     if (!group) return;
     onListenerDragCommit([group.position.x, group.position.y, group.position.z]);
-  };
+  }, [onListenerDragCommit]);
 
   const startListenerDrag = () => {
     setDraggingListener(true);
@@ -357,7 +357,7 @@ export function TrackNodes({
       window.removeEventListener("pointerup", stopDraggingListener);
       window.removeEventListener("pointercancel", stopDraggingListener);
     };
-  }, [draggingListener]);
+  }, [draggingListener, commitListenerDrag]);
 
   useEffect(() => {
     if (draggingListener) return;

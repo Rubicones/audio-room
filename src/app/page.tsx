@@ -1,7 +1,8 @@
 "use client";
 
-import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { DefaultLoadingManager } from "three";
 import * as Tone from "tone";
 import {
@@ -25,12 +26,22 @@ import {
   type RoomMaterialPreset,
 } from "@/components/canvas/acousticMaterials";
 import {
+  type Track,
   type ObstacleType,
   type TrackConfig,
 } from "@/components/canvas/types";
 import { ROOM_CENTER_POSITION } from "@/components/canvas/obstacleConstants";
 import { PlayerBar } from "@/components/ui/PlayerBar";
 import { SketchSlider } from "@/components/ui/SketchSlider";
+import { useAuthStore } from "@/components/auth/AuthStore";
+import { ProjectsDashboard } from "@/components/projects/ProjectsDashboard";
+import type { ProjectListItem } from "@/components/projects/types";
+import { supabase } from "@/lib/supabaseClient";
+import {
+  deserializeProjectConfig,
+  serializeProjectConfig,
+  type ProjectConfigJSON,
+} from "@/lib/projectConfig";
 import { Landing } from "./Landing";
 import styles from "./page.module.css";
 
@@ -57,6 +68,40 @@ const DEMO_TRACK_FILES = [
   "overheads.webm",
   "overheads 2.webm",
 ] as const;
+const AUDIO_BUCKET = "audio";
+
+type ProjectRow = ProjectListItem & {
+  config: ProjectConfigJSON;
+};
+
+type AppPhase =
+  | "initializing"
+  | "unauthenticated"
+  | "onboarding"
+  | "dashboard"
+  | "projectLoading"
+  | "workspace";
+
+function extractAudioObjectPath(audioUrl: string): string | null {
+  try {
+    const parsed = new URL(audioUrl);
+    const patterns = [
+      "/storage/v1/object/public/audio/",
+      "/storage/v1/object/sign/audio/",
+      "/storage/v1/object/authenticated/audio/",
+    ];
+    for (const prefix of patterns) {
+      const idx = parsed.pathname.indexOf(prefix);
+      if (idx === -1) continue;
+      const raw = parsed.pathname.slice(idx + prefix.length);
+      if (!raw) return null;
+      return decodeURIComponent(raw);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function buildDemoTracks(startIndex: number): TrackConfig[] {
   return DEMO_TRACK_FILES.map((file, idx) => ({
@@ -248,6 +293,22 @@ function renderSummaryRows(
 }
 
 function MixerPage() {
+  const { user, session, isLoading } = useAuthStore();
+  const sessionUserId = session?.user?.id ?? null;
+  const router = useRouter();
+  const pathname = usePathname();
+  const projectIdFromPath = useMemo(() => {
+    const match = pathname.match(/^\/p\/([0-9a-fA-F-]+)$/);
+    return match ? match[1] : null;
+  }, [pathname]);
+  const username = String(
+    user?.user_metadata?.username ??
+      user?.user_metadata?.preferred_username ??
+      user?.user_metadata?.name ??
+      user?.user_metadata?.full_name ??
+      ""
+  ).trim();
+  const avatarFallbackLetter = (username || user?.email || "U").charAt(0).toUpperCase();
   const {
     tracks,
     obstacles,
@@ -261,6 +322,7 @@ function MixerPage() {
     updateTrackName,
     toggleTrackMute,
     toggleTrackSolo,
+    updateTrackAudioUrl,
     setRoomScale,
     setRoomMaterial,
     setEnableRoomReverb,
@@ -273,11 +335,16 @@ function MixerPage() {
     toggleTrackShadows,
     setTrackRotationDeg,
     setObstacleRotationDeg,
+    replaceProjectState,
+    resetProjectState,
   } = useTrackStore();
   const [view, setView] = useState<CameraView>("isometric");
   const [isPlaying, setIsPlaying] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
+  const [appPhase, setAppPhase] = useState<AppPhase>("initializing");
+  const [isAppInitializing, setIsAppInitializing] = useState(true);
   const [startMode, setStartMode] = useState<"clean" | "demo" | null>(null);
+  const [listenerPosition, setListenerPosition] = useState<[number, number, number]>([0, 0.5, 0]);
+  const [listenerRotationDeg] = useState(0);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [isBootReady, setIsBootReady] = useState(false);
   const [transportLoading, setTransportLoading] = useState(false);
@@ -292,7 +359,161 @@ function MixerPage() {
   const [trackLoadedMap, setTrackLoadedMap] = useState<Record<string, boolean>>({});
   const [copyToast, setCopyToast] = useState<string | null>(null);
   const [activeObstacleId, setActiveObstacleId] = useState<string | null>(null);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [currentProjectTitle, setCurrentProjectTitle] = useState("Untitled project");
+  const [projectTitleBusy, setProjectTitleBusy] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [isDemoScene, setIsDemoScene] = useState(false);
+  const [isHydrating, setIsHydrating] = useState(false);
+  const [pendingUploadsCount, setPendingUploadsCount] = useState(0);
   const demoAutoStartedRef = useRef(false);
+  const previousTrackCountRef = useRef(0);
+  const saveDebounceRef = useRef<number | null>(null);
+  const loadingProjectRef = useRef(false);
+  const creatingProjectRef = useRef(false);
+  const workspaceActive = appPhase === "workspace";
+  const replaceUrlWithProjectId = useCallback((projectId: string) => {
+    if (typeof window === "undefined") return;
+    const nextPath = `/p/${projectId}`;
+    if (window.location.pathname === nextPath) return;
+    window.history.replaceState(window.history.state, "", nextPath);
+  }, []);
+
+
+  const runTransition = (update: () => void) => {
+    const doc = document as Document & {
+      startViewTransition?: (callback: () => void) => void;
+    };
+    if (typeof doc.startViewTransition === "function") {
+      doc.startViewTransition(() => {
+        update();
+      });
+      return;
+    }
+    update();
+  };
+
+  const currentProjectConfig = useMemo(
+    () =>
+      serializeProjectConfig({
+        roomScale,
+        roomMaterial: acousticSettings.roomMaterial,
+        showShadows: acousticSettings.showAcousticShadows,
+        showAttenuation: acousticSettings.showAttenuationZones,
+        showCriticalDistance: acousticSettings.showCriticalDistance,
+        airAbsorptionEnabled: acousticSettings.enableAirAbsorption,
+        listenerPosition,
+        listenerRotationDeg,
+        obstacles,
+        tracks,
+      }),
+    [
+      roomScale,
+      acousticSettings.roomMaterial,
+      acousticSettings.showAcousticShadows,
+      acousticSettings.showAttenuationZones,
+      acousticSettings.showCriticalDistance,
+      acousticSettings.enableAirAbsorption,
+      listenerPosition,
+      listenerRotationDeg,
+      obstacles,
+      tracks,
+    ]
+  );
+  const hasPendingBlobTrackUrl = useMemo(
+    () => tracks.some((track) => typeof track.audioUrl === "string" && track.audioUrl.startsWith("blob:")),
+    [tracks]
+  );
+  const pendingBlobTracksCount = useMemo(
+    () =>
+      tracks.filter(
+        (track) => typeof track.audioUrl === "string" && track.audioUrl.startsWith("blob:")
+      ).length,
+    [tracks]
+  );
+  const syncStatusText = useMemo(() => {
+    if (pendingUploadsCount > 0) {
+      return `Uploading ${pendingUploadsCount} track${pendingUploadsCount === 1 ? "" : "s"}...`;
+    }
+    if (pendingBlobTracksCount > 0) {
+      return `${pendingBlobTracksCount} track${pendingBlobTracksCount === 1 ? "" : "s"} local only`;
+    }
+    if (saveState === "saving") return "Saving...";
+    if (saveState === "saved") return "Saved";
+    if (saveState === "error") return "Save failed";
+    return "";
+  }, [pendingBlobTracksCount, pendingUploadsCount, saveState]);
+  const persistedProjectConfig = useMemo<ProjectConfigJSON>(() => {
+    if (!hasPendingBlobTrackUrl) return currentProjectConfig;
+    return {
+      ...currentProjectConfig,
+      tracks: currentProjectConfig.tracks.filter(
+        (track) => typeof track.audioUrl === "string" && !track.audioUrl.startsWith("blob:")
+      ),
+    };
+  }, [currentProjectConfig, hasPendingBlobTrackUrl]);
+  const resolveTrackPlaybackUrls = useCallback(
+    async (projectTracks: Track[]) => {
+      if (!supabase) return projectTracks;
+      const resolved = await Promise.all(
+        projectTracks.map(async (track) => {
+          if (!track.audioUrl || track.audioUrl.startsWith("blob:")) return track;
+          const objectPath = extractAudioObjectPath(track.audioUrl);
+          if (!objectPath) return track;
+          const { data, error } = await supabase.storage
+            .from(AUDIO_BUCKET)
+            .createSignedUrl(objectPath, 60 * 60 * 8);
+          if (error || !data?.signedUrl) return track;
+          return { ...track, audioUrl: data.signedUrl };
+        })
+      );
+      return resolved;
+    },
+    []
+  );
+
+  const refreshProjects = useCallback(async (): Promise<ProjectRow[]> => {
+    if (!supabase || !sessionUserId) return [];
+    setProjectsLoading(true);
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id,title,config,updated_at")
+      .eq("user_id", sessionUserId)
+      .order("updated_at", { ascending: false });
+    if (error) {
+      setProfileError(error.message);
+      setProjectsLoading(false);
+      return [];
+    }
+    const next = (data ?? []) as ProjectRow[];
+    setProjects(next);
+    setProjectsLoading(false);
+    return next;
+  }, [sessionUserId]);
+
+  const performProjectSave = useCallback(
+    async (overrideConfig?: ProjectConfigJSON) => {
+      if (!supabase || !currentProjectId || isDemoScene || isHydrating) return;
+      setSaveState("saving");
+      const { error } = await supabase
+        .from("projects")
+        .update({ config: overrideConfig ?? persistedProjectConfig, updated_at: new Date().toISOString() })
+        .eq("id", currentProjectId);
+      if (error) {
+        setSaveState("error");
+        return;
+      }
+      setSaveState("saved");
+    },
+    [currentProjectId, isDemoScene, isHydrating, persistedProjectConfig]
+  );
 
   useEffect(() => () => disposeAudioEngine(), []);
 
@@ -304,7 +525,145 @@ function MixerPage() {
   }, []);
 
   useEffect(() => {
-    if (!hasStarted) return;
+    let active = true;
+    if (isLoading) return () => {
+      active = false;
+    };
+    const initialize = async () => {
+      setIsAppInitializing(true);
+      if (!supabase) {
+        if (!active) return;
+        setAppPhase("unauthenticated");
+        setIsAppInitializing(false);
+        return;
+      }
+      if (!sessionUserId) {
+        if (!active) return;
+        setAppPhase("unauthenticated");
+        setCurrentProjectId(null);
+        setCurrentProjectTitle("Untitled project");
+        setSaveState("idle");
+        setIsAppInitializing(false);
+        return;
+      }
+
+      if (projectIdFromPath) {
+        loadingProjectRef.current = true;
+        if (active) setAppPhase("projectLoading");
+        const { data, error } = await supabase
+          .from("projects")
+          .select("id,title,config,updated_at")
+          .eq("id", projectIdFromPath)
+            .eq("user_id", sessionUserId)
+          .single();
+        if (!active) return;
+        if (error || !data) {
+          loadingProjectRef.current = false;
+          setIsHydrating(false);
+          router.replace("/");
+          const rows = await refreshProjects();
+          if (!active) return;
+          setAppPhase(rows.length > 0 ? "dashboard" : "onboarding");
+          setIsAppInitializing(false);
+          return;
+        }
+        setIsHydrating(true);
+        try {
+          const hydrated = deserializeProjectConfig(data.config as ProjectConfigJSON);
+          const hydratedTracks = await resolveTrackPlaybackUrls(hydrated.tracks);
+          replaceProjectState({
+            tracks: hydratedTracks,
+            roomScale: hydrated.roomScale,
+            obstacles: hydrated.obstacles,
+            acousticSettings: {
+              roomMaterial: hydrated.roomMaterial,
+              enableAirAbsorption: hydrated.airAbsorptionEnabled,
+              showAcousticShadows: hydrated.showShadows,
+              showAttenuationZones: hydrated.showAttenuation,
+              showCriticalDistance: hydrated.showCriticalDistance,
+            },
+          });
+          setListenerPosition(hydrated.listenerPosition);
+          setCurrentProjectId(data.id);
+          setCurrentProjectTitle(data.title || "Untitled project");
+          setIsDemoScene(false);
+          setSaveState("saved");
+          previousTrackCountRef.current = hydratedTracks.length;
+          loadingProjectRef.current = false;
+          setAppPhase("workspace");
+          setIsAppInitializing(false);
+        } finally {
+          setIsHydrating(false);
+        }
+        return;
+      }
+
+      const rows = await refreshProjects();
+      if (!active) return;
+      setAppPhase(rows.length > 0 ? "dashboard" : "onboarding");
+      setIsAppInitializing(false);
+    };
+    void initialize();
+    return () => {
+      active = false;
+    };
+  }, [isLoading, projectIdFromPath, refreshProjects, replaceProjectState, resolveTrackPlaybackUrls, router, sessionUserId]);
+
+  useEffect(() => {
+    if (!supabase || !sessionUserId || currentProjectId || isDemoScene || isHydrating) return;
+    if (persistedProjectConfig.tracks.length === 0) return;
+    if (creatingProjectRef.current) return;
+    creatingProjectRef.current = true;
+    const firstTrackName =
+      persistedProjectConfig.tracks[0]?.name?.trim() ||
+      tracks[0]?.name?.trim() ||
+      "Untitled project";
+    void (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("projects")
+          .insert({
+            user_id: sessionUserId,
+            title: firstTrackName,
+            config: persistedProjectConfig,
+          })
+          .select("id,title,config,updated_at")
+          .single();
+        if (error || !data) {
+          return;
+        }
+        setCurrentProjectId(data.id);
+        setCurrentProjectTitle(data.title || firstTrackName);
+        setIsDemoScene(false);
+        replaceUrlWithProjectId(data.id);
+        setSaveState("saved");
+        void refreshProjects();
+      } finally {
+        creatingProjectRef.current = false;
+      }
+    })();
+  }, [currentProjectId, isDemoScene, isHydrating, persistedProjectConfig, refreshProjects, replaceUrlWithProjectId, sessionUserId, tracks]);
+
+  useEffect(() => {
+    if (!currentProjectId) return;
+    if (isDemoScene || isHydrating) return;
+    if (loadingProjectRef.current) return;
+    setSaveState("saving");
+    if (saveDebounceRef.current) {
+      window.clearTimeout(saveDebounceRef.current);
+    }
+    saveDebounceRef.current = window.setTimeout(() => {
+      void performProjectSave();
+    }, 1500);
+    return () => {
+      if (saveDebounceRef.current) {
+        window.clearTimeout(saveDebounceRef.current);
+      }
+    };
+  }, [currentProjectConfig, currentProjectId, isDemoScene, isHydrating, performProjectSave]);
+
+  useEffect(() => {
+    if (!workspaceActive) return;
     let resolvedAssets = false;
     let resolvedTone = false;
 
@@ -351,31 +710,260 @@ function MixerPage() {
       DefaultLoadingManager.onLoad = previousOnLoad;
       DefaultLoadingManager.onError = previousOnError;
     };
-  }, [hasStarted]);
+  }, [workspaceActive]);
 
   const startApp = async (mode: "clean" | "demo") => {
     await Tone.start();
-    setHasStarted(true);
+    resetProjectState();
+    setListenerPosition([0, 0.5, 0]);
+    setIsBootReady(false);
+    setAppPhase("workspace");
+    setIsDemoScene(mode === "demo");
     setStartMode(mode);
+    setCurrentProjectId(null);
+    setCurrentProjectTitle("Untitled project");
+    setSaveState("idle");
+    router.replace("/");
     if (mode === "demo") {
       setTrackBuffersLoading(true);
-      addTracks(buildDemoTracks(tracks.length));
+      addTracks(buildDemoTracks(0));
       setDemoQueued(true);
     }
   };
 
+  const openProjectsDashboard = useCallback(async () => {
+    disposeAudioEngine();
+    runTransition(() => {
+      setAppPhase("dashboard");
+      setStartMode(null);
+      setDemoQueued(false);
+      setIsPlaying(false);
+      setIsBootReady(false);
+      setProfileMenuOpen(false);
+      setChangePasswordOpen(false);
+      setCurrentProjectId(null);
+      setIsDemoScene(false);
+      setSaveState("idle");
+      resetProjectState();
+      setListenerPosition([0, 0.5, 0]);
+    });
+    router.replace("/");
+    await refreshProjects();
+  }, [refreshProjects, resetProjectState, router]);
+
+  const loadProject = useCallback(
+    async (project: ProjectRow) => {
+      setIsHydrating(true);
+      try {
+        const hydrated = deserializeProjectConfig(project.config);
+        const hydratedTracks = await resolveTrackPlaybackUrls(hydrated.tracks);
+        replaceProjectState({
+          tracks: hydratedTracks,
+          roomScale: hydrated.roomScale,
+          obstacles: hydrated.obstacles,
+          acousticSettings: {
+            roomMaterial: hydrated.roomMaterial,
+            enableAirAbsorption: hydrated.airAbsorptionEnabled,
+            showAcousticShadows: hydrated.showShadows,
+            showAttenuationZones: hydrated.showAttenuation,
+            showCriticalDistance: hydrated.showCriticalDistance,
+          },
+        });
+        setListenerPosition(hydrated.listenerPosition);
+        setCurrentProjectId(project.id);
+        setCurrentProjectTitle(project.title || "Untitled project");
+        setIsBootReady(false);
+        setAppPhase("workspace");
+        setIsDemoScene(false);
+        setSaveState("saved");
+        previousTrackCountRef.current = hydratedTracks.length;
+        router.replace(`/p/${project.id}`);
+      } finally {
+        setIsHydrating(false);
+      }
+    },
+    [replaceProjectState, resolveTrackPlaybackUrls, router]
+  );
+
+  const handleOpenProjectFromDashboard = useCallback(
+    async (projectId: string) => {
+      const project = projects.find((candidate) => candidate.id === projectId);
+      if (!project) return;
+      await loadProject(project);
+    },
+    [loadProject, projects]
+  );
+
+  const handleRenameProjectFromDashboard = useCallback(
+    async (projectId: string, nextTitle: string) => {
+      if (!supabase) return;
+      const normalized = nextTitle.trim() || "Untitled project";
+      setProjects((current) =>
+        current.map((project) =>
+          project.id === projectId ? { ...project, title: normalized } : project
+        )
+      );
+      if (currentProjectId === projectId) {
+        setCurrentProjectTitle(normalized);
+      }
+      const { error } = await supabase
+        .from("projects")
+        .update({ title: normalized, updated_at: new Date().toISOString() })
+        .eq("id", projectId);
+      if (error) {
+        setProfileError(error.message);
+        void refreshProjects();
+      }
+    },
+    [currentProjectId, refreshProjects]
+  );
+
+  const handleDeleteProjectFromDashboard = useCallback(
+    async (projectId: string) => {
+      if (!supabase) return;
+      const { error } = await supabase.from("projects").delete().eq("id", projectId);
+      if (error) {
+        setProfileError(error.message);
+        return;
+      }
+      setProjects((current) => current.filter((project) => project.id !== projectId));
+      if (currentProjectId === projectId) {
+        setCurrentProjectId(null);
+        setCurrentProjectTitle("Untitled project");
+        setSaveState("idle");
+        setAppPhase("dashboard");
+        router.replace("/");
+      }
+    },
+    [currentProjectId, router]
+  );
+
+  const handleSignOut = async () => {
+    if (!supabase) return;
+    setProfileBusy(true);
+    setProfileError("");
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      runTransition(() => {
+        setAppPhase("unauthenticated");
+        setIsDemoScene(false);
+        setStartMode(null);
+        setDemoQueued(false);
+        setIsPlaying(false);
+        setIsBootReady(false);
+        setProfileMenuOpen(false);
+        setChangePasswordOpen(false);
+        setCurrentProjectId(null);
+        setSaveState("idle");
+      });
+      router.replace("/");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Sign out failed";
+      setProfileError(message);
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!supabase || !newPassword.trim()) return;
+    setProfileBusy(true);
+    setProfileError("");
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword.trim(),
+      });
+      if (error) throw error;
+      setNewPassword("");
+      setChangePasswordOpen(false);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Could not change password";
+      setProfileError(message);
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const handleProjectTitleChange = async (title: string) => {
+    setCurrentProjectTitle(title);
+    if (!supabase || !currentProjectId || isDemoScene) return;
+    setProjectTitleBusy(true);
+    const nextTitle = title.trim() || "Untitled project";
+    const { error } = await supabase
+      .from("projects")
+      .update({ title: nextTitle, updated_at: new Date().toISOString() })
+      .eq("id", currentProjectId);
+    setProjectTitleBusy(false);
+    if (error) {
+      setProfileError(error.message);
+      return;
+    }
+    setCurrentProjectTitle(nextTitle);
+    void refreshProjects();
+  };
+
+  const handleForceSaveNow = async () => {
+    if (saveDebounceRef.current) {
+      window.clearTimeout(saveDebounceRef.current);
+      saveDebounceRef.current = null;
+    }
+    await performProjectSave();
+  };
+
   const handleFileAdd = (event: ChangeEvent<HTMLInputElement>) => {
+    const sanitizeFileName = (value: string) =>
+      value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "");
+    const uploadToAudioBucket = async (file: File) => {
+      if (!supabase || !sessionUserId) return URL.createObjectURL(file);
+      const ext = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")) : "";
+      const base = file.name.replace(/\.[^/.]+$/, "");
+      const safeBase = sanitizeFileName(base) || "track";
+      const filePath = `${sessionUserId}/${Date.now()}-${crypto.randomUUID()}-${safeBase}${ext}`;
+      const { error } = await supabase.storage.from(AUDIO_BUCKET).upload(filePath, file, {
+        upsert: false,
+        cacheControl: "3600",
+      });
+      if (error) {
+        setProfileError(error.message);
+        return URL.createObjectURL(file);
+      }
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from(AUDIO_BUCKET)
+        .createSignedUrl(filePath, 60 * 60 * 8);
+      if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
+      const { data } = supabase.storage.from(AUDIO_BUCKET).getPublicUrl(filePath);
+      return data.publicUrl || URL.createObjectURL(file);
+    };
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
-
+    setTrackBuffersLoading(true);
+    setPendingUploadsCount((current) => current + files.length);
     const newTracks = files.map((file, index) => ({
+      id: crypto.randomUUID(),
       name: file.name.replace(/\.[^/.]+$/, ""),
       color: PALETTE[(tracks.length + index) % PALETTE.length],
       audioUrl: URL.createObjectURL(file),
     }));
-
-    setTrackBuffersLoading(true);
     addTracks(newTracks);
+    void (async () => {
+      await Promise.all(
+        files.map(async (file, index) => {
+          try {
+            const remoteUrl = await uploadToAudioBucket(file);
+            if (remoteUrl.startsWith("blob:")) return;
+            updateTrackAudioUrl(newTracks[index].id, remoteUrl);
+          } finally {
+            setPendingUploadsCount((current) => Math.max(0, current - 1));
+          }
+        })
+      );
+    })();
     event.currentTarget.value = "";
   };
 
@@ -444,6 +1032,7 @@ function MixerPage() {
     tracks.length === 0 || !isBootReady || trackBuffersLoading || transportLoading;
   const diagnostics = summaryTrackId ? getTrackDiagnostics(summaryTrackId) : null;
   const showDevDiagnostics = process.env.NODE_ENV === "development";
+  const shouldShowBootOverlay = workspaceActive && !isBootReady && startMode !== null;
 
   const handleSummaryCopy = async (label: string, value: string) => {
     try {
@@ -827,18 +1416,20 @@ function MixerPage() {
                 >
                   s
                 </button>
-                <button
-                  type="button"
-                  className={`${styles.removeBtn} ${
-                    !trackLoadedMap[track.id] ? styles.removeBtnDisabled : ""
-                  }`}
-                  onClick={() => removeTrack(track.id)}
-                  disabled={!trackLoadedMap[track.id]}
-                  aria-label={`Remove ${track.name}`}
-                  title={!trackLoadedMap[track.id] ? "Wait until track loads" : "Remove track"}
-                >
-                  ×
-                </button>
+                {!isDemoScene ? (
+                  <button
+                    type="button"
+                    className={`${styles.removeBtn} ${
+                      !trackLoadedMap[track.id] ? styles.removeBtnDisabled : ""
+                    }`}
+                    onClick={() => removeTrack(track.id)}
+                    disabled={!trackLoadedMap[track.id]}
+                    aria-label={`Remove ${track.name}`}
+                    title={!trackLoadedMap[track.id] ? "Wait until track loads" : "Remove track"}
+                  >
+                    ×
+                  </button>
+                ) : null}
               </div>
               <div className={styles.trackGainRow}>
                 <SketchSlider
@@ -931,29 +1522,59 @@ function MixerPage() {
           ))}
         </ul>
 
-        <div className={styles.addColumn}>
-          <label className={styles.addBtn}>
-            Add track
-            <input
-              type="file"
-              accept="audio/*"
-              multiple
-              onChange={handleFileAdd}
-            />
-          </label>
-          <button
-            type="button"
-            className={styles.demoBtn}
-            onClick={() => addTracks(buildDemoTracks(tracks.length))}
-          >
-            Set up the demo track
-          </button>
-        </div>
+        {!isDemoScene ? (
+          <div className={styles.addColumn}>
+            <label className={styles.addBtn}>
+              Add track
+              <input
+                type="file"
+                accept="audio/*"
+                multiple
+                onChange={handleFileAdd}
+              />
+            </label>
+            <button
+              type="button"
+              className={styles.demoBtn}
+              onClick={() => addTracks(buildDemoTracks(tracks.length))}
+            >
+              Set up the demo track
+            </button>
+          </div>
+        ) : null}
       </section>
     </>
   );
 
-  if (!hasStarted) {
+  if (isAppInitializing || appPhase === "initializing" || appPhase === "projectLoading") {
+    return (
+      <main className={styles.page}>
+        <div className={styles.appInitializing}>
+          <span className={styles.spinner} aria-hidden />
+          <p>Loading workspace...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (appPhase === "dashboard") {
+    return (
+      <main className={styles.page}>
+        <ProjectsDashboard
+          projects={projects}
+          isLoading={projectsLoading}
+          currentProjectId={currentProjectId}
+          onOpenProject={(projectId) => void handleOpenProjectFromDashboard(projectId)}
+          onRenameProject={handleRenameProjectFromDashboard}
+          onDeleteProject={handleDeleteProjectFromDashboard}
+          onStartClean={() => void startApp("clean")}
+          onLoadDemo={() => void startApp("demo")}
+        />
+      </main>
+    );
+  }
+
+  if (appPhase === "unauthenticated" || appPhase === "onboarding") {
     return (
       <main className={styles.page}>
         <Landing onStartClean={() => void startApp("clean")} onStartDemo={() => void startApp("demo")} />
@@ -963,7 +1584,108 @@ function MixerPage() {
 
   return (
     <main className={styles.page}>
-      {hasStarted && !isBootReady ? (
+      {session ? (
+        <header className={styles.workspaceHeader}>
+          <button
+            type="button"
+            className={styles.workspaceBrand}
+            onClick={() => void openProjectsDashboard()}
+            aria-label="Go to projects dashboard"
+          >
+            foam
+          </button>
+          <div className={styles.profileWrap}>
+            <span className={styles.syncStatus}>
+              {syncStatusText}
+            </span>
+            <button
+              type="button"
+              className={styles.profileAvatar}
+              onClick={() => setProfileMenuOpen((value) => !value)}
+              aria-label="Open profile menu"
+            >
+              {user?.user_metadata?.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={String(user.user_metadata.avatar_url)} alt="" />
+              ) : (
+                <span>{avatarFallbackLetter}</span>
+              )}
+            </button>
+            {profileMenuOpen ? (
+              <div className={styles.profileMenu} style={{ viewTransitionName: "profile-menu" }}>
+                {username ? <p className={styles.profileEmail}>{username}</p> : null}
+                <p className={styles.profileEmail}>{user?.email}</p>
+                <input
+                  type="text"
+                  className={styles.profilePasswordInput}
+                  value={currentProjectTitle}
+                  onChange={(event) => {
+                    void handleProjectTitleChange(event.target.value);
+                  }}
+                  placeholder="project title"
+                  disabled={profileBusy || projectTitleBusy || !currentProjectId || isDemoScene}
+                />
+                <button
+                  type="button"
+                  className={styles.profileAction}
+                  onClick={() => void handleForceSaveNow()}
+                  disabled={profileBusy || !currentProjectId || isDemoScene}
+                >
+                  Save Project Now
+                </button>
+                <button
+                  type="button"
+                  className={styles.profileAction}
+                  onClick={() => void openProjectsDashboard()}
+                  disabled={profileBusy}
+                >
+                  My Projects
+                </button>
+                <button
+                  type="button"
+                  className={styles.profileAction}
+                  onClick={() => setChangePasswordOpen((value) => !value)}
+                  disabled={profileBusy}
+                >
+                  Change Password
+                </button>
+                {changePasswordOpen ? (
+                  <div className={styles.profilePasswordRow}>
+                    <input
+                      type="password"
+                      className={styles.profilePasswordInput}
+                      autoComplete="new-password"
+                      value={newPassword}
+                      onChange={(event) => setNewPassword(event.target.value)}
+                      placeholder="new password"
+                      disabled={profileBusy}
+                    />
+                    <button
+                      type="button"
+                      className={styles.profileAction}
+                      onClick={() => void handleChangePassword()}
+                      disabled={profileBusy || newPassword.trim().length < 6}
+                    >
+                      Save
+                    </button>
+                  </div>
+                ) : null}
+                {isDemoScene ? <span className={styles.demoBadge}>DEMO - READ ONLY</span> : null}
+                <button
+                  type="button"
+                  className={styles.profileDanger}
+                  onClick={() => void handleSignOut()}
+                  disabled={profileBusy}
+                >
+                  Log Out
+                </button>
+                {profileError ? <p className={styles.profileError}>{profileError}</p> : null}
+              </div>
+            ) : null}
+          </div>
+        </header>
+      ) : null}
+      {shouldShowBootOverlay ? (
         <div className={styles.loadingScreen}>
           <h1>Sketching Spatial Lab</h1>
           <p>Loading assets and audio buffers... {loadingProgress}%</p>
@@ -1016,8 +1738,9 @@ function MixerPage() {
           strokeLinejoin="round"
           aria-hidden
         >
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.6 1.6 0 0 0 .32 1.76l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.6 1.6 0 0 0 15 19.4a1.6 1.6 0 0 0-1 .6 1.6 1.6 0 0 0-.4 1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-.4-1 1.6 1.6 0 0 0-1-.4 1.6 1.6 0 0 0-1 .32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.6 1.6 0 0 0 4.6 15a1.6 1.6 0 0 0-.6-1 1.6 1.6 0 0 0-1-.4H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1-.4 1.6 1.6 0 0 0 .4-1 1.6 1.6 0 0 0-.32-1l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.6 1.6 0 0 0 9 4.6c.4 0 .78-.16 1-.4.24-.24.4-.62.4-1V3a2 2 0 1 1 4 0v.1c0 .38.16.76.4 1 .24.24.62.4 1 .4.38 0 .74-.12 1-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1c0 .38.16.76.4 1 .24.24.62.4 1 .4H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1 .4 1.6 1.6 0 0 0-.5 1z" />
+          <path d="M4 7h16" />
+          <path d="M4 12h16" />
+          <path d="M4 17h16" />
         </svg>
       </button>
 
@@ -1042,7 +1765,9 @@ function MixerPage() {
           <SceneCanvas
             view={view}
             zoomSteps={zoomSteps}
-          onActiveObstacleChange={setActiveObstacleId}
+            listenerPosition={listenerPosition}
+            onListenerPositionChange={setListenerPosition}
+            onActiveObstacleChange={setActiveObstacleId}
           />
         ) : null}
       </section>
@@ -1149,10 +1874,18 @@ function MixerPage() {
   );
 }
 
+function AuthenticatedApp() {
+  return (
+    <>
+      <TrackStoreProvider>
+        <MixerPage />
+      </TrackStoreProvider>
+    </>
+  );
+}
+
 export default function HomePage() {
   return (
-    <TrackStoreProvider>
-      <MixerPage />
-    </TrackStoreProvider>
+    <AuthenticatedApp />
   );
 }

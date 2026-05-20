@@ -95,6 +95,8 @@ const trackDirectivityState = new Map<
   string,
   {
     enabled: boolean;
+    alpha: number;
+    sharpness: number;
     fx: number;
     fy: number;
     fz: number;
@@ -431,7 +433,9 @@ async function ensureTrackAudio(track: Track) {
     setTrackDirectivityState(
       track.id,
       [Math.sin(rad), 0, -Math.cos(rad)],
-      track.isDirectivityEnabled
+      track.isDirectivityEnabled,
+      track.directivityAlpha,
+      track.directivitySharpness
     );
     refreshTrackMix();
 
@@ -735,7 +739,9 @@ function getTrackAcousticData(trackId: string): TrackAcousticData | null {
 function setTrackDirectivityState(
   trackId: string,
   forward: [number, number, number],
-  enabled: boolean
+  enabled: boolean,
+  alpha = enabled ? 0.5 : 0,
+  sharpness = 1
 ) {
   if (!engineState) return;
   const source = sources.get(trackId);
@@ -757,19 +763,23 @@ function setTrackDirectivityState(
   const changed =
     !prev ||
     prev.enabled !== enabled ||
+    Math.abs(prev.alpha - alpha) > 0.005 ||
+    Math.abs(prev.sharpness - sharpness) > 0.005 ||
     Math.abs(prev.fx - safeFx) > 0.005 ||
     Math.abs(prev.fy - safeFy) > 0.005 ||
     Math.abs(prev.fz - safeFz) > 0.005;
   if (!changed) return;
 
   source.setOrientation?.(safeFx, safeFy, safeFz, 0, 1, 0);
-  const alpha = enabled ? 0.5 : 0;
-  const sharpness = 1.0;
-  source.setDirectivityPattern?.(alpha, sharpness);
-  source.setDirectivity?.(alpha, sharpness);
+  const normalizedAlpha = enabled ? Math.max(0, Math.min(1, alpha)) : 0;
+  const normalizedSharpness = Math.max(0, Math.min(1, sharpness));
+  source.setDirectivityPattern?.(normalizedAlpha, normalizedSharpness);
+  source.setDirectivity?.(normalizedAlpha, normalizedSharpness);
 
   trackDirectivityState.set(trackId, {
     enabled,
+    alpha: normalizedAlpha,
+    sharpness: normalizedSharpness,
     fx: safeFx,
     fy: safeFy,
     fz: safeFz,
