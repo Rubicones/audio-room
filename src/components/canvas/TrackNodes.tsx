@@ -59,6 +59,7 @@ type TrackNodesProps = {
   onListenerRef: (object: Object3D | null) => void;
   onTrackRef: (trackId: string, object: Object3D | null) => void;
   roomScale: [number, number, number];
+  onDraggingTrackChange?: (trackId: string | null) => void;
 };
 
 function ListenerHeadphones() {
@@ -260,6 +261,7 @@ export function TrackNodes({
   onListenerRef,
   onTrackRef,
   roomScale,
+  onDraggingTrackChange,
 }: TrackNodesProps) {
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
   const trackGroups = useRef<Map<string, Group>>(new Map());
@@ -310,6 +312,7 @@ export function TrackNodes({
           commitDrag(trackId);
           setDraggingTrackId(null);
           draggingTrackIdRef.current = null;
+          onDraggingTrackChange?.(null);
         }}
         onPointerOut={(event) => {
           const trackId = draggingTrackIdRef.current;
@@ -352,6 +355,7 @@ export function TrackNodes({
             target.setPointerCapture?.(event.pointerId);
             setDraggingTrackId(track.id);
             draggingTrackIdRef.current = track.id;
+            onDraggingTrackChange?.(track.id);
             updateDragFromEvent(event, track.id);
           }}
           onPointerMove={(event) => {
@@ -366,6 +370,7 @@ export function TrackNodes({
             commitDrag(track.id);
             setDraggingTrackId(null);
             draggingTrackIdRef.current = null;
+            onDraggingTrackChange?.(null);
             const target = event.target as Element & {
               releasePointerCapture?: (id: number) => void;
             };
@@ -375,6 +380,7 @@ export function TrackNodes({
             if (draggingTrackIdRef.current === track.id) {
               setDraggingTrackId(null);
               draggingTrackIdRef.current = null;
+              onDraggingTrackChange?.(null);
             }
           }}
         />

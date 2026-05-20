@@ -3,7 +3,11 @@
 import * as Tone from "tone";
 import { Vector3 } from "three";
 import type { Track } from "./types";
-import type { RoomMaterialPreset } from "./TrackStore";
+import {
+  ACOUSTIC_MATERIALS,
+  type RoomMaterialPreset,
+  type ResonanceMaterialId,
+} from "./acousticMaterials";
 
 type ResonanceSceneLike = {
   output: AudioNode;
@@ -52,15 +56,19 @@ type TrackNodeBundle = {
   uiGain: GainNode;
   mixGain: GainNode;
   distanceGain: GainNode;
+  shadowOcclusionGain: GainNode;
+  dynamicOcclusionGain: GainNode;
   airFilter: BiquadFilterNode;
   occlusionFilter: BiquadFilterNode;
   shadowFilter: BiquadFilterNode;
+  dynamicOcclusionFilter: BiquadFilterNode;
 };
 
 type AudioEngineState = {
   nativeAudioContext: AudioContext;
   audioContext: AudioContext;
   resonanceScene: ResonanceSceneLike;
+  safetyLimiter: DynamicsCompressorNode;
   roomGain: GainNode;
   masterAnalyser: AnalyserNode;
   listenerPosition: Vector3;
@@ -83,7 +91,15 @@ const pendingTrackPositions = new Map<string, { x: number; y: number; z: number 
 const trackMixState = new Map<string, { muted: boolean; solo: boolean }>();
 const trackDirectivityState = new Map<
   string,
-  { enabled: boolean; fx: number; fy: number; fz: number }
+  {
+    enabled: boolean;
+    fx: number;
+    fy: number;
+    fz: number;
+    tx: number;
+    ty: number;
+    tz: number;
+  }
 >();
 let isPlaying = false;
 let airAbsorptionEnabled = false;
@@ -99,13 +115,21 @@ const sourceDirectionXZ = new Vector3();
 /** Educational acoustic-shadow low-pass (bypassed when false). */
 let educationalShadowsEnabled = false;
 const shadowOcclusionState = new Map<string, number>();
+const shadowLineBlockedState = new Map<string, boolean>();
+const shadowOcclusionLossDbState = new Map<string, number>();
+const shadowOccluderCountState = new Map<string, number>();
+const shadowCutoffHzState = new Map<string, number>();
+const dynamicAcousticsState = new Map<string, { cutoffHz: number; gain: number }>();
+const diagnosticsLastLogMs = new Map<string, number>();
+let diagnosticsReferenceLogged = false;
+const DIAGNOSTICS_LOG_THROTTLE_MS = 500;
+const BASE_TRACK_GAIN_LINEAR = 2; // +6 dB baseline for all tracks
+const DYNAMIC_ACOUSTICS_RAMP_SEC = 0.08;
 
-const MATERIAL_ALPHA_MAP: Record<RoomMaterialPreset, number> = {
-  brick: 0.3,
-  wood: 0.45,
-  "acoustic-foam": 0.9,
-  marble: 0.05,
-};
+let currentRoomMaterial: RoomMaterialPreset = "brick";
+let currentResonanceMaterialId: ResonanceMaterialId = "brick-bare";
+let isReverbNodeConnected = false;
+let lastMaterialDiagnostic = "";
 
 export type RoomAcousticsResult = {
   rt60Ms: number;
@@ -123,6 +147,13 @@ export type TrackAcousticData = {
   reverbSendPct: number;
   dryPct: number;
   occluded: boolean;
+  distanceM: number;
+  attenuationDb: number;
+  directivityAngleDeg: number;
+  directivityCoefficient: number;
+  directivityGainDb: number;
+  lowPassCutoffHz: number;
+  airAbsorptionFilterHz: number;
 };
 
 export type TrackLoadingState = {
@@ -138,6 +169,11 @@ function gainDbToLinear(gainDb: number) {
 function linearToGainDb(value: number) {
   if (!Number.isFinite(value) || value <= 0.0001) return -Infinity;
   return 20 * Math.log10(value);
+}
+
+function attenuationDbFromDistance(distance: number) {
+  const d = Math.max(0.001, distance);
+  return 20 * Math.log10(1 / d);
 }
 
 function getEngineState() {
@@ -163,12 +199,20 @@ function getEngineState() {
   const audioContext = Tone.getContext().rawContext as AudioContext;
 
   const resonanceScene = new resonanceCtor(nativeAudioContext);
+  const safetyLimiter = nativeAudioContext.createDynamicsCompressor();
+  // Limiter-like safety stage to prevent clipping on summed tracks.
+  safetyLimiter.threshold.value = -1;
+  safetyLimiter.knee.value = 0;
+  safetyLimiter.ratio.value = 20;
+  safetyLimiter.attack.value = 0.003;
+  safetyLimiter.release.value = 0.08;
   const roomGain = nativeAudioContext.createGain();
   roomGain.gain.value = 1;
   const masterAnalyser = nativeAudioContext.createAnalyser();
   masterAnalyser.fftSize = 256;
   masterAnalyser.smoothingTimeConstant = 0.7;
-  resonanceScene.output.connect(roomGain);
+  resonanceScene.output.connect(safetyLimiter);
+  safetyLimiter.connect(roomGain);
   roomGain.connect(masterAnalyser);
   roomGain.connect(nativeAudioContext.destination);
 
@@ -176,12 +220,27 @@ function getEngineState() {
     nativeAudioContext,
     audioContext,
     resonanceScene,
+    safetyLimiter,
     roomGain,
     masterAnalyser,
     listenerPosition: new Vector3(0, 0.5, 0),
     listenerForward: new Vector3(0, 0, -1),
     roomDimensions: { width: 10, height: 4, depth: 10 },
   };
+
+  if (process.env.NODE_ENV === "development" && !diagnosticsReferenceLogged) {
+    diagnosticsReferenceLogged = true;
+    const at2m = attenuationDbFromDistance(2);
+    const at4m = attenuationDbFromDistance(4);
+    console.log(
+      [
+        "--- [foam DIAGNOSTICS REFERENCE] ---",
+        `2m expected attenuation: ${at2m.toFixed(1)} dB (approx -6.0 dB)`,
+        `4m expected attenuation: ${at4m.toFixed(1)} dB (approx -12.0 dB)`,
+        "------------------------------------",
+      ].join("\n")
+    );
+  }
 
   return engineState;
 }
@@ -264,21 +323,29 @@ async function ensureTrackAudio(track: Track) {
   const uiGain = audioContext.createGain();
   const mixGain = audioContext.createGain();
   const distanceGain = audioContext.createGain();
+  const shadowOcclusionGain = audioContext.createGain();
+  const dynamicOcclusionGain = audioContext.createGain();
   const airFilter = audioContext.createBiquadFilter();
   airFilter.type = "lowpass";
   airFilter.frequency.value = 20000;
   airFilter.Q.value = 0.0001;
   const occlusionFilter = audioContext.createBiquadFilter();
   const shadowFilter = audioContext.createBiquadFilter();
-  uiGain.gain.value = Math.max(0.0001, gainDbToLinear(track.gainDb));
+  const dynamicOcclusionFilter = audioContext.createBiquadFilter();
+  uiGain.gain.value = Math.max(0.0001, BASE_TRACK_GAIN_LINEAR * gainDbToLinear(track.gainDb));
   mixGain.gain.value = 1;
   distanceGain.gain.value = 1;
+  shadowOcclusionGain.gain.value = 1;
+  dynamicOcclusionGain.gain.value = 1;
   occlusionFilter.type = "lowpass";
   occlusionFilter.frequency.value = 12000;
   occlusionFilter.Q.value = 0.7;
   shadowFilter.type = "lowpass";
   shadowFilter.frequency.value = 20000;
   shadowFilter.Q.value = 0.7;
+  dynamicOcclusionFilter.type = "lowpass";
+  dynamicOcclusionFilter.frequency.value = 20000;
+  dynamicOcclusionFilter.Q.value = 0.7;
 
   // Tone node -> native graph -> Resonance source input.
   player.connect(uiGain);
@@ -286,8 +353,11 @@ async function ensureTrackAudio(track: Track) {
   mixGain.connect(distanceGain);
   distanceGain.connect(airFilter);
   airFilter.connect(occlusionFilter);
-  occlusionFilter.connect(shadowFilter);
-  shadowFilter.connect(source.input);
+  occlusionFilter.connect(shadowOcclusionGain);
+  shadowOcclusionGain.connect(shadowFilter);
+  shadowFilter.connect(dynamicOcclusionFilter);
+  dynamicOcclusionFilter.connect(dynamicOcclusionGain);
+  dynamicOcclusionGain.connect(source.input);
 
   try {
     await player.load(track.audioUrl);
@@ -298,9 +368,12 @@ async function ensureTrackAudio(track: Track) {
       uiGain,
       mixGain,
       distanceGain,
+      shadowOcclusionGain,
+      dynamicOcclusionGain,
       airFilter,
       occlusionFilter,
-      shadowFilter
+      shadowFilter,
+      dynamicOcclusionFilter
     );
     return;
   }
@@ -312,10 +385,14 @@ async function ensureTrackAudio(track: Track) {
     uiGain,
     mixGain,
     distanceGain,
+    shadowOcclusionGain,
+    dynamicOcclusionGain,
     airFilter,
     occlusionFilter,
     shadowFilter,
+    dynamicOcclusionFilter,
   });
+  dynamicAcousticsState.set(track.id, { cutoffHz: 20000, gain: 1 });
   // Apply spatial/audio state immediately on decode so sources never start as
   // temporary full-volume "center" playback before the next frame sync.
   applyTrackPosition(track.id, {
@@ -346,17 +423,23 @@ function nodesCleanup(
   uiGain: GainNode,
   mixGain: GainNode,
   distanceGain: GainNode,
+  shadowOcclusionGain: GainNode,
+  dynamicOcclusionGain: GainNode,
   airFilter: BiquadFilterNode,
   occlusionFilter: BiquadFilterNode,
-  shadowFilter: BiquadFilterNode
+  shadowFilter: BiquadFilterNode,
+  dynamicOcclusionFilter: BiquadFilterNode
 ) {
   player.dispose();
   uiGain.disconnect();
   mixGain.disconnect();
   distanceGain.disconnect();
+  shadowOcclusionGain.disconnect();
+  dynamicOcclusionGain.disconnect();
   airFilter.disconnect();
   occlusionFilter.disconnect();
   shadowFilter.disconnect();
+  dynamicOcclusionFilter.disconnect();
 }
 
 function refreshTrackMix() {
@@ -384,9 +467,10 @@ function setTrackUiGainDb(trackId: string, gainDb: number) {
   const t = engineState.audioContext.currentTime;
   const linear = gainDbToLinear(gainDb);
   // Use epsilon to keep exponential response stable even near silence.
-  const target = Math.max(0.0001, linear);
+  const target = Math.max(0.0001, BASE_TRACK_GAIN_LINEAR * linear);
   nodes.uiGain.gain.cancelScheduledValues(t);
   nodes.uiGain.gain.setTargetAtTime(target, t, 0.06);
+  logDiagnosticsThrottled(trackId);
 }
 
 function pruneTracks(validIds: string[]) {
@@ -399,10 +483,19 @@ function pruneTracks(validIds: string[]) {
     nodes?.uiGain.disconnect();
     nodes?.mixGain.disconnect();
     nodes?.distanceGain.disconnect();
+    nodes?.shadowOcclusionGain.disconnect();
+    nodes?.dynamicOcclusionGain.disconnect();
     nodes?.airFilter.disconnect();
     nodes?.occlusionFilter.disconnect();
     nodes?.shadowFilter.disconnect();
+    nodes?.dynamicOcclusionFilter.disconnect();
     shadowOcclusionState.delete(id);
+    shadowLineBlockedState.delete(id);
+    shadowOcclusionLossDbState.delete(id);
+    shadowOccluderCountState.delete(id);
+    shadowCutoffHzState.delete(id);
+    dynamicAcousticsState.delete(id);
+    diagnosticsLastLogMs.delete(id);
     trackDirectivityState.delete(id);
     trackPositions.delete(id);
     pendingTrackPositions.delete(id);
@@ -485,6 +578,7 @@ function applyTrackPosition(
   // Keep subtle near-wall boost in level to emulate early reflections cheaply.
   const wallBoost = nearWallDistance < 1 ? (1 - Math.max(0, nearWallDistance)) * 0.12 : 0;
   nodes.distanceGain.gain.value = Math.min(1, nodes.distanceGain.gain.value + wallBoost);
+  logDiagnosticsThrottled(trackId);
 }
 
 function flushTrackPositions() {
@@ -520,12 +614,10 @@ function getTrackAcousticData(trackId: string): TrackAcousticData | null {
   const position = trackPositions.get(trackId);
   if (!nodes || !position) return null;
 
-  const [x, y, z] = position;
-  const listener = engineState.listenerPosition;
-  const dx = x - listener.x;
-  const dy = y - listener.y;
-  const dz = z - listener.z;
-  const distance = Math.max(0.001, Math.sqrt(dx * dx + dy * dy + dz * dz));
+  const diagnostics = getTrackDiagnostics(trackId);
+  if (!diagnostics) return null;
+
+  const [x, _y, z] = position;
   const roomHalfWidth = engineState.roomDimensions.width / 2;
   const roomHalfDepth = engineState.roomDimensions.depth / 2;
   const roomDiag = Math.sqrt(
@@ -543,28 +635,28 @@ function getTrackAcousticData(trackId: string): TrackAcousticData | null {
     roomHalfDepth - Math.abs(z)
   );
   const nearWallNorm = Math.max(0, Math.min(1, 1 - nearWallDistance / 2));
-  const distanceNorm = Math.max(0, Math.min(1, distance / Math.max(1, roomDiag * 0.7)));
+  const distanceNorm = Math.max(
+    0,
+    Math.min(1, diagnostics.distanceM / Math.max(1, roomDiag * 0.7))
+  );
   const wet = Math.max(0, Math.min(1, 0.15 + distanceNorm * 0.55 + nearWallNorm * 0.3));
   const dry = 1 - wet;
-  const clarity = shadowOcclusionState.get(trackId) ?? 1;
-  const occlusionFactor = Math.max(0, Math.min(1, 1 - clarity));
-  // Use the real live DSP state from node frequencies.
-  const computedFilter = Math.max(
-    120,
-    Math.min(
-      nodes.airFilter.frequency.value,
-      nodes.occlusionFilter.frequency.value,
-      nodes.shadowFilter.frequency.value
-    )
-  );
 
   return {
-    gainDb: linearToGainDb(nodes.uiGain.gain.value),
+    // Keep UI fader values relative to the boosted baseline.
+    gainDb: linearToGainDb(nodes.uiGain.gain.value / BASE_TRACK_GAIN_LINEAR),
     panningText,
-    filterHz: Math.round(computedFilter),
+    filterHz: Math.round(diagnostics.lowPassCutoffHz),
     reverbSendPct: Math.round(wet * 100),
     dryPct: Math.round(dry * 100),
-    occluded: occlusionFactor > 0.12,
+    occluded: diagnostics.occluded,
+    distanceM: diagnostics.distanceM,
+    attenuationDb: diagnostics.attenuationDb,
+    directivityAngleDeg: diagnostics.directivityAngleDeg,
+    directivityCoefficient: diagnostics.directivityCoefficient,
+    directivityGainDb: diagnostics.directivityGainDb,
+    lowPassCutoffHz: diagnostics.lowPassCutoffHz,
+    airAbsorptionFilterHz: diagnostics.airAbsorptionFilterHz,
   };
 }
 
@@ -584,6 +676,10 @@ function setTrackDirectivityState(
   const safeFx = norm > 1e-5 ? fx / norm : 0;
   const safeFy = norm > 1e-5 ? fy / norm : 0;
   const safeFz = norm > 1e-5 ? fz / norm : -1;
+  const tNorm = Math.hypot(forward[0], forward[1], forward[2]);
+  const safeTx = tNorm > 1e-5 ? forward[0] / tNorm : 0;
+  const safeTy = tNorm > 1e-5 ? forward[1] / tNorm : 0;
+  const safeTz = tNorm > 1e-5 ? forward[2] / tNorm : -1;
 
   const prev = trackDirectivityState.get(trackId);
   const changed =
@@ -605,7 +701,11 @@ function setTrackDirectivityState(
     fx: safeFx,
     fy: safeFy,
     fz: safeFz,
+    tx: safeTx,
+    ty: safeTy,
+    tz: safeTz,
   });
+  logDiagnosticsThrottled(trackId);
 }
 
 function updateRoomAcoustics(
@@ -613,90 +713,91 @@ function updateRoomAcoustics(
   materialPreset: RoomMaterialPreset,
   enableRoomReverb: boolean
 ) {
-  const { resonanceScene, roomGain } = getEngineState();
-  const width = 10 * scale[0];
-  const height = 4 * scale[1];
-  const depth = 10 * scale[2];
-  getEngineState().roomDimensions = { width, height, depth };
+  const { resonanceScene, roomGain, nativeAudioContext } = getEngineState();
+  if (!resonanceScene || typeof resonanceScene.setRoomProperties !== "function") {
+    return {
+      rt60Ms: 850,
+      rt60Sec: 0.85,
+      width: 10,
+      height: 4,
+      depth: 10,
+      materialAlpha: 0.3,
+    };
+  }
 
-  const MATERIAL_MAP: Record<
-    RoomMaterialPreset,
-    {
-      materials: { left: string; right: string; front: string; back: string; down: string; up: string };
-      absorption: number;
-      gainCompDb: number;
-    }
-  > = {
-    brick: {
-      materials: {
-        left: "brick-bare",
-        right: "brick-bare",
-        front: "brick-bare",
-        back: "brick-bare",
-        down: "wood-panel",
-        up: "acoustic-ceiling-tiles",
-      },
-      absorption: 0.22,
-      gainCompDb: -1.2,
-    },
-    wood: {
-      materials: {
-        left: "wood-panel",
-        right: "wood-panel",
-        front: "wood-panel",
-        back: "wood-panel",
-        down: "wood-panel",
-        up: "acoustic-ceiling-tiles",
-      },
-      absorption: 0.35,
-      gainCompDb: -0.7,
-    },
-    "acoustic-foam": {
-      materials: {
-        left: "curtain-heavy",
-        right: "curtain-heavy",
-        front: "curtain-heavy",
-        back: "curtain-heavy",
-        down: "acoustic-ceiling-tiles",
-        up: "acoustic-ceiling-tiles",
-      },
-      absorption: 0.85,
-      gainCompDb: 0,
-    },
-    marble: {
-      materials: {
-        left: "marble",
-        right: "marble",
-        front: "marble",
-        back: "marble",
-        down: "marble",
-        up: "marble",
-      },
-      absorption: 0.12,
-      gainCompDb: -2.2,
-    },
+  const width = Math.max(1, Number(10 * scale[0]));
+  const height = Math.max(1, Number(4 * scale[1]));
+  const depth = Math.max(1, Number(10 * scale[2]));
+  const safeWidth = Number.isFinite(width) ? width : 10;
+  const safeHeight = Number.isFinite(height) ? height : 4;
+  const safeDepth = Number.isFinite(depth) ? depth : 10;
+  getEngineState().roomDimensions = {
+    width: safeWidth,
+    height: safeHeight,
+    depth: safeDepth,
   };
+  currentRoomMaterial = materialPreset;
 
-  const deadRoom = {
-    left: "curtain-heavy",
-    right: "curtain-heavy",
-    front: "curtain-heavy",
-    back: "curtain-heavy",
-    down: "acoustic-ceiling-tiles",
-    up: "acoustic-ceiling-tiles",
+  const selected = ACOUSTIC_MATERIALS[materialPreset];
+  const materialAlpha = selected.absorption;
+  const targetId = (selected?.idReal ?? "concrete-block-painted") as ResonanceMaterialId;
+  const dimensions = {
+    width: safeWidth,
+    height: safeHeight,
+    depth: safeDepth,
   };
+  const materials = {
+    left: String(targetId),
+    right: String(targetId),
+    front: String(targetId),
+    back: String(targetId),
+    down: String(targetId),
+    up: String(targetId),
+  };
+  let applyOk = false;
+  try {
+    resonanceScene.setRoomProperties(dimensions, materials);
+    currentResonanceMaterialId = targetId;
+    applyOk = true;
+  } catch (error) {
+    console.error("🚨 [foam] Critical failure updating material space:", error);
+  }
 
-  const selected = MATERIAL_MAP[materialPreset];
-  const materialAlpha = enableRoomReverb ? MATERIAL_ALPHA_MAP[materialPreset] : 0.95;
-  resonanceScene.setRoomProperties?.(
-    { width, height, depth },
-    enableRoomReverb ? selected.materials : deadRoom
+  if (nativeAudioContext.state === "suspended") {
+    void nativeAudioContext.resume().then(() => {
+      try {
+        resonanceScene.setRoomProperties(dimensions, materials);
+        currentResonanceMaterialId = targetId;
+      } catch {
+        // no-op
+      }
+    });
+  }
+
+  isReverbNodeConnected =
+    Boolean(resonanceScene.setRoomProperties) && applyOk && enableRoomReverb;
+
+  const diagnosticLine = `🔊 [foam DIAGNOSTIC] Material Changed -> Key: "${materialPreset}" | Resolved Library ID: "${targetId}" | Context: ${Tone.getContext().state}`;
+  if (diagnosticLine !== lastMaterialDiagnostic) {
+    lastMaterialDiagnostic = diagnosticLine;
+    console.log(diagnosticLine);
+  }
+
+  roomGain.gain.value = enableRoomReverb ? 1 : 0.82;
+
+  const area =
+    2 *
+    (safeWidth * safeDepth + safeWidth * safeHeight + safeDepth * safeHeight);
+  const absorption = enableRoomReverb ? selected.absorption : Math.max(0.9, selected.absorption);
+  const rt60 = Math.max(
+    0.12,
+    (0.161 * safeWidth * safeHeight * safeDepth) / Math.max(0.01, area * absorption)
   );
-  roomGain.gain.value = Math.pow(10, (enableRoomReverb ? selected.gainCompDb : 0) / 20);
-
-  const area = 2 * (width * depth + width * height + depth * height);
-  const absorption = enableRoomReverb ? selected.absorption : 0.95;
-  const rt60 = Math.max(0.12, (0.161 * width * height * depth) / Math.max(0.01, area * absorption));
+  if (process.env.NODE_ENV === "development") {
+    for (const id of trackIds) {
+      logDiagnosticsThrottled(id);
+    }
+  }
   return {
     rt60Ms: Math.round(rt60 * 1000),
     rt60Sec: rt60,
@@ -712,31 +813,244 @@ function setEducationalShadowEnabled(enabled: boolean) {
   if (!engineState) return;
   const t = engineState.audioContext.currentTime;
   for (const nodes of trackNodes.values()) {
+    nodes.shadowOcclusionGain.gain.cancelScheduledValues(t);
+    nodes.shadowOcclusionGain.gain.setValueAtTime(1, t);
     nodes.shadowFilter.frequency.cancelScheduledValues(t);
     nodes.shadowFilter.frequency.setValueAtTime(20000, t);
+    nodes.dynamicOcclusionFilter.frequency.cancelScheduledValues(t);
+    nodes.dynamicOcclusionFilter.frequency.setValueAtTime(20000, t);
+    nodes.dynamicOcclusionGain.gain.cancelScheduledValues(t);
+    nodes.dynamicOcclusionGain.gain.setValueAtTime(1, t);
   }
+  dynamicAcousticsState.clear();
   shadowOcclusionState.clear();
+  shadowLineBlockedState.clear();
+  shadowOcclusionLossDbState.clear();
+  shadowOccluderCountState.clear();
+  shadowCutoffHzState.clear();
+}
+
+function setTrackDynamicAcoustics(trackId: string, cutoffHz: number, gain: number) {
+  if (!engineState) return;
+  const nodes = trackNodes.get(trackId);
+  if (!nodes) return;
+  const nextCutoff = Math.max(250, Math.min(20000, cutoffHz));
+  const nextGain = Math.max(0.03, Math.min(1.2, gain));
+  const prev = dynamicAcousticsState.get(trackId);
+  if (
+    prev &&
+    Math.abs(prev.cutoffHz - nextCutoff) < 4 &&
+    Math.abs(prev.gain - nextGain) < 0.002
+  ) {
+    return;
+  }
+  dynamicAcousticsState.set(trackId, { cutoffHz: nextCutoff, gain: nextGain });
+  const t = engineState.audioContext.currentTime;
+  nodes.dynamicOcclusionFilter.frequency.cancelScheduledValues(t);
+  nodes.dynamicOcclusionFilter.frequency.linearRampToValueAtTime(
+    nextCutoff,
+    t + DYNAMIC_ACOUSTICS_RAMP_SEC
+  );
+  nodes.dynamicOcclusionGain.gain.cancelScheduledValues(t);
+  nodes.dynamicOcclusionGain.gain.linearRampToValueAtTime(nextGain, t + DYNAMIC_ACOUSTICS_RAMP_SEC);
 }
 
 function updateTrackShadowOcclusion(
   trackId: string,
   clarityFactor: number,
-  materialAlpha: number
+  materialAlpha: number,
+  lineBlocked = false,
+  combinedCutoffHz?: number,
+  combinedLossDb?: number,
+  occluderCount?: number
 ) {
   if (!educationalShadowsEnabled || !engineState) return;
   const nodes = trackNodes.get(trackId);
   if (!nodes) return;
   const clampedClarity = Math.min(1, Math.max(0, clarityFactor));
   const prev = shadowOcclusionState.get(trackId);
-  if (prev !== undefined && Math.abs(prev - clampedClarity) < 0.005) return;
+  const prevCutoff = shadowCutoffHzState.get(trackId);
+  const expectedCutoff =
+    Number.isFinite(combinedCutoffHz) && combinedCutoffHz
+      ? Math.max(120, Math.min(20000, combinedCutoffHz))
+      : undefined;
+  if (
+    prev !== undefined &&
+    Math.abs(prev - clampedClarity) < 0.005 &&
+    (expectedCutoff === undefined ||
+      (prevCutoff !== undefined && Math.abs(prevCutoff - expectedCutoff) < 8))
+  ) {
+    return;
+  }
   shadowOcclusionState.set(trackId, clampedClarity);
+  shadowLineBlockedState.set(trackId, lineBlocked);
+  shadowOcclusionLossDbState.set(trackId, Number.isFinite(combinedLossDb) ? (combinedLossDb as number) : 0);
+  shadowOccluderCountState.set(trackId, Math.max(0, occluderCount ?? 0));
 
   const alpha = Math.min(1, Math.max(0, materialAlpha));
   const minFreq = 400 + (1 - alpha) * 1600;
-  const target = minFreq + clampedClarity * (20000 - minFreq);
+  const targetFromClarity = minFreq + clampedClarity * (20000 - minFreq);
+  const target =
+    Number.isFinite(combinedCutoffHz) && combinedCutoffHz
+      ? Math.max(120, Math.min(20000, combinedCutoffHz))
+      : targetFromClarity;
+  shadowCutoffHzState.set(trackId, target);
   const t = engineState.audioContext.currentTime;
   nodes.shadowFilter.frequency.cancelScheduledValues(t);
-  nodes.shadowFilter.frequency.setTargetAtTime(target, t, 0.1);
+  nodes.shadowFilter.frequency.linearRampToValueAtTime(target, t + 0.1);
+  const combinedLoss = Math.max(0, combinedLossDb ?? 0);
+  const attenuationLinear = Math.max(0.08, Math.pow(10, -combinedLoss / 20));
+  nodes.shadowOcclusionGain.gain.cancelScheduledValues(t);
+  nodes.shadowOcclusionGain.gain.linearRampToValueAtTime(attenuationLinear, t + 0.1);
+  logDiagnosticsThrottled(trackId);
+}
+
+type TrackDiagnostics = {
+  distanceM: number;
+  deltaVector: [number, number, number];
+  attenuationDb: number;
+  directivityAngleDeg: number;
+  directivityCoefficient: number;
+  directivityGainDb: number;
+  lowPassCutoffHz: number;
+  airAbsorptionFilterHz: number;
+  occluded: boolean;
+  occlusionLossDb: number;
+  occluderCount: number;
+  room: RoomDiagnostics;
+};
+
+type RoomDiagnostics = {
+  materialKey: RoomMaterialPreset;
+  materialResonanceId: ResonanceMaterialId;
+  materialName: string;
+  materialAlphaLabel: string;
+  materialDesc: string;
+  reverbNodeConnected: boolean;
+  width: number;
+  height: number;
+  depth: number;
+  volumeM3: number;
+  surfaceAreaM2: number;
+  volumeSurfaceRatio: number;
+};
+
+function getRoomDiagnostics(): RoomDiagnostics | null {
+  if (!engineState) return null;
+  const { width, height, depth } = engineState.roomDimensions;
+  const material = ACOUSTIC_MATERIALS[currentRoomMaterial];
+  const volumeM3 = width * height * depth;
+  const surfaceAreaM2 = 2 * (width * height + width * depth + height * depth);
+  const volumeSurfaceRatio = volumeM3 / Math.max(0.001, surfaceAreaM2);
+  return {
+    materialKey: currentRoomMaterial,
+    materialResonanceId: currentResonanceMaterialId,
+    materialName: material.name,
+    materialAlphaLabel: material.alpha,
+    materialDesc: material.desc,
+    reverbNodeConnected: isReverbNodeConnected,
+    width,
+    height,
+    depth,
+    volumeM3,
+    surfaceAreaM2,
+    volumeSurfaceRatio,
+  };
+}
+
+function getTrackDiagnostics(trackId: string): TrackDiagnostics | null {
+  if (!engineState) return null;
+  const nodes = trackNodes.get(trackId);
+  const position = trackPositions.get(trackId);
+  if (!nodes || !position) return null;
+
+  const listener = engineState.listenerPosition;
+  const dx = listener.x - position[0];
+  const dy = listener.y - position[1];
+  const dz = listener.z - position[2];
+  const distance = Math.max(0.001, Math.sqrt(dx * dx + dy * dy + dz * dz));
+  const attenuationDb = attenuationDbFromDistance(distance);
+
+  const dirState = trackDirectivityState.get(trackId);
+  const toListenerLen = Math.max(0.001, Math.sqrt(dx * dx + dy * dy + dz * dz));
+  const lx = dx / toListenerLen;
+  const ly = dy / toListenerLen;
+  const lz = dz / toListenerLen;
+  const fx = dirState?.tx ?? 0;
+  const fy = dirState?.ty ?? 0;
+  const fz = dirState?.tz ?? -1;
+  const dot = Math.max(-1, Math.min(1, fx * lx + fy * ly + fz * lz));
+  const angleDeg = (Math.acos(dot) * 180) / Math.PI;
+  const directivityCoefficient = dirState?.enabled ? Math.max(0, (1 + dot) / 2) : 1;
+  const directivityGainDb = linearToGainDb(directivityCoefficient);
+
+  const lowPassCutoffHz = Math.max(
+    120,
+    Math.min(
+      nodes.airFilter.frequency.value,
+      nodes.occlusionFilter.frequency.value,
+      nodes.shadowFilter.frequency.value,
+      nodes.dynamicOcclusionFilter.frequency.value
+    )
+  );
+  const airAbsorptionFilterHz = Math.max(120, nodes.airFilter.frequency.value);
+  const occluded = shadowLineBlockedState.get(trackId) ?? false;
+  const occlusionLossDb = shadowOcclusionLossDbState.get(trackId) ?? 0;
+  const occluderCount = shadowOccluderCountState.get(trackId) ?? 0;
+  const room = getRoomDiagnostics();
+  if (!room) return null;
+
+  return {
+    distanceM: distance,
+    deltaVector: [listener.x - position[0], listener.y - position[1], listener.z - position[2]],
+    attenuationDb,
+    directivityAngleDeg: angleDeg,
+    directivityCoefficient,
+    directivityGainDb,
+    lowPassCutoffHz,
+    airAbsorptionFilterHz,
+    occluded,
+    occlusionLossDb,
+    occluderCount,
+    room,
+  };
+}
+
+function logDiagnosticsThrottled(trackId: string) {
+  if (process.env.NODE_ENV !== "development") return;
+  const now = performance.now();
+  const last = diagnosticsLastLogMs.get(trackId) ?? 0;
+  if (now - last < DIAGNOSTICS_LOG_THROTTLE_MS) return;
+  diagnosticsLastLogMs.set(trackId, now);
+  const d = getTrackDiagnostics(trackId);
+  if (!d) return;
+  console.log(
+    [
+      `--- [foam DIAGNOSTICS: Track #${trackId}] ---`,
+      `📍 Distance: ${d.distanceM.toFixed(2)} meters | Delta Vector: [${d.deltaVector[0].toFixed(
+        2
+      )}, ${d.deltaVector[1].toFixed(2)}, ${d.deltaVector[2].toFixed(2)}]`,
+      `🔊 Attenuation: ${d.attenuationDb.toFixed(1)} dB (Inverse Square Law)`,
+      `🔄 Angle to Listener: ${d.directivityAngleDeg.toFixed(
+        1
+      )}° | Directivity Gain: ${d.directivityGainDb.toFixed(1)} dB`,
+      `🧱 Occlusion: ${d.occluded ? "[ACTIVE]" : "[INACTIVE]"} | LPF Cutoff: ${Math.round(
+        d.lowPassCutoffHz
+      )} Hz | Loss: ${d.occlusionLossDb.toFixed(1)} dB | Columns: ${d.occluderCount}`,
+      `💨 Air Absorption Filter: ${Math.round(d.airAbsorptionFilterHz)} Hz`,
+      "-----------------------------------------",
+      "🔊 --- [foam AUDIO RESONANCE DEEPLOG] ---",
+      `📐 Box Size: ${d.room.width.toFixed(1)}m x ${d.room.height.toFixed(1)}m x ${d.room.depth.toFixed(
+        1
+      )}m`,
+      `🧱 Sent Material Key: "${d.room.materialKey}" -> ID passed to Engine: "${d.room.materialResonanceId}"`,
+      `📊 Specs: Name: ${d.room.materialName} | Coefficients: ${d.room.materialAlphaLabel}`,
+      `🎛️ AudioContext State: ${Tone.getContext().state} | Is Node Active: ${
+        d.room.reverbNodeConnected ? "YES" : "NO"
+      }`,
+      "--------------------------------",
+    ].join("\n")
+  );
 }
 
 function setAirAbsorptionEnabled(enabled: boolean) {
@@ -764,8 +1078,6 @@ async function toggleTransport() {
   if (nativeAudioContext.state === "suspended") await nativeAudioContext.resume();
   await Tone.start();
   Tone.Destination.volume.value = 0;
-  console.log("Context state:", Tone.getContext().state);
-  console.log("Transport before toggle:", Tone.Transport.state);
 
   if (isPlaying) {
     players.forEach((player) => {
@@ -776,7 +1088,6 @@ async function toggleTransport() {
       }
     });
     Tone.Transport.stop();
-    console.log("Transport after stop:", Tone.Transport.state);
     isPlaying = false;
     globalPlaybackStartTime = 0;
     return false;
@@ -792,13 +1103,13 @@ async function toggleTransport() {
     }
   });
   Tone.Transport.start();
-  console.log("Transport after start:", Tone.Transport.state);
   isPlaying = true;
   return true;
 }
 
 function disposeAudioEngine() {
   if (!engineState) return;
+  engineState.safetyLimiter.disconnect();
   isPlaying = false;
   globalPlaybackStartTime = 0;
   for (const player of players.values()) player.dispose();
@@ -809,6 +1120,9 @@ function disposeAudioEngine() {
     nodes.airFilter.disconnect();
     nodes.occlusionFilter.disconnect();
     nodes.shadowFilter.disconnect();
+    nodes.shadowOcclusionGain.disconnect();
+    nodes.dynamicOcclusionFilter.disconnect();
+    nodes.dynamicOcclusionGain.disconnect();
   }
   players.clear();
   sources.clear();
@@ -822,6 +1136,12 @@ function disposeAudioEngine() {
   trackPositionRafId = null;
   trackMixState.clear();
   shadowOcclusionState.clear();
+  shadowLineBlockedState.clear();
+  shadowOcclusionLossDbState.clear();
+  shadowOccluderCountState.clear();
+  shadowCutoffHzState.clear();
+  dynamicAcousticsState.clear();
+  diagnosticsLastLogMs.clear();
   trackDirectivityState.clear();
   airAbsorptionEnabled = false;
   educationalShadowsEnabled = false;
@@ -940,7 +1260,10 @@ export {
   getMaxTrackDurationSeconds,
   seekTransport,
   updateRoomAcoustics,
+  setTrackDynamicAcoustics,
   getTrackAcousticData,
+  getTrackDiagnostics,
+  getRoomDiagnostics,
   waitForToneLoaded,
   preloadTracks,
 };

@@ -5,11 +5,11 @@ import { useFrame } from "@react-three/fiber";
 import { useMemo, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
 import { Group, Object3D, Vector3 } from "three";
-import { updateTrackShadowOcclusion } from "./audioEngine";
+import { setTrackDynamicAcoustics, updateTrackShadowOcclusion } from "./audioEngine";
 import {
-  OBSTACLE_CENTER,
   OBSTACLE_RADIUS,
 } from "./obstacleConstants";
+import { MATERIAL_REGISTRY, type AcousticColumn } from "./types";
 import { useItimFontUrl } from "./sketch";
 import { getDirectivityRayAnchors } from "./directivity";
 
@@ -177,69 +177,88 @@ function computeObstacleShadowClarity(
 }
 
 
-function inShadowWedge(
-  px: number,
-  pz: number,
+function buildConeHatchSegmentPoints(
   sx: number,
-  sz: number,
-  ox: number,
-  oz: number,
-  R: number
-): boolean {
-  const vx = ox - sx;
-  const vz = oz - sz;
-  const d = Math.hypot(vx, vz);
-  if (d <= R + 0.02) return false;
-  const ux = vx / d;
-  const uz = vz / d;
-  const wx = px - sx;
-  const wz = pz - sz;
-  const wlen = Math.hypot(wx, wz);
-  if (wlen < 1e-4) return false;
-  const along = wx * ux + wz * uz;
-  const tangentDist = Math.sqrt(d * d - R * R);
-  if (along < tangentDist - 0.05) return false;
-  const cosang = along / wlen;
-  const cosalpha = Math.sqrt(1 - (R / d) * (R / d));
-  return cosang >= cosalpha - 0.02;
-}
-
-function buildHatchSegmentPoints(
-  sx: number,
+  sy: number,
   sz: number,
   halfW: number,
   halfD: number,
-  ox: number,
-  oz: number,
-  R: number,
-  step: number
+  column: AcousticColumn
 ): [number, number, number][] {
   const out: [number, number, number][] = [];
-  const xmin = -halfW;
-  const xmax = halfW;
-  const zmin = -halfD;
-  const zmax = halfD;
-  const diag = step * 0.55;
+  const ox = column.position[0];
+  const oz = column.position[2];
+  const dx = ox - sx;
+  const dz = oz - sz;
+  const dist2D = Math.hypot(dx, dz);
+  if (dist2D <= 1e-4) {
+    out.push([-0.01, FLOOR_Y, -0.01], [0.01, FLOOR_Y, 0.01]);
+    return out;
+  }
+  const dirX = dx / dist2D;
+  const dirZ = dz / dist2D;
+  const perpX = -dirZ;
+  const perpZ = dirX;
 
-  for (let gx = xmin; gx < xmax; gx += step) {
-    for (let gz = zmin; gz < zmax; gz += step) {
-      const cx = gx + step * 0.35;
-      const cz = gz + step * 0.35;
-      if (!inShadowWedge(cx, cz, sx, sz, ox, oz, R)) continue;
-      const x0 = gx;
-      const z0 = gz;
-      const x1 = gx + diag;
-      const z1 = gz + diag;
-      if (x1 > xmax || z1 > zmax) continue;
-      out.push([x0, FLOOR_Y, z0], [x1, FLOOR_Y, z1]);
-      if (out.length >= 240) return out;
+  const sourceY = Math.max(0.25, Math.abs(sy));
+  const startX = ox + dirX * (column.radius + 0.02);
+  const startZ = oz + dirZ * (column.radius + 0.02);
+  const coneSlope = column.radius / Math.max(dist2D, column.radius * 1.2);
+  const perspectiveLen = (column.height * dist2D) / sourceY;
+  const hit = firstWallHit(startX, startZ, dirX, dirZ, halfW, halfD);
+  const wallLen = hit
+    ? Math.hypot(hit.hx - startX, hit.hz - startZ)
+    : Math.max(1, Math.hypot(halfW * 2, halfD * 2) * 1.8);
+  // Keep the hatch stretching to room bounds so the shadow never clips in the play zone.
+  const projectedLen = Math.max(perspectiveLen, wallLen + 0.35);
+
+  const clampX = (x: number) => Math.max(-halfW, Math.min(halfW, x));
+  const clampZ = (z: number) => Math.max(-halfD, Math.min(halfD, z));
+  const push = (ax: number, az: number, bx: number, bz: number) => {
+    out.push([clampX(ax), FLOOR_Y, clampZ(az)], [clampX(bx), FLOOR_Y, clampZ(bz)]);
+  };
+
+  const stepAlong = 0.26;
+  for (let along = 0; along <= projectedLen; along += stepAlong) {
+    const halfWidth = column.radius + along * coneSlope;
+    const stepAcross = Math.max(0.13, halfWidth * 0.24);
+    for (let across = -halfWidth + 0.05; across <= halfWidth - 0.05; across += stepAcross) {
+      const bx = startX + dirX * along + perpX * across;
+      const bz = startZ + dirZ * along + perpZ * across;
+      const segLen = 0.14 + halfWidth * 0.16;
+      const tx = bx + dirX * segLen + perpX * 0.07;
+      const tz = bz + dirZ * segLen + perpZ * 0.07;
+      push(bx, bz, tx, tz);
+      if (out.length >= 900) return out;
     }
   }
 
-  if (out.length < 4) {
+  if (out.length < 2) {
     out.push([-0.01, FLOOR_Y, -0.01], [0.01, FLOOR_Y, 0.01]);
   }
   return out;
+}
+
+function darkenHex(hex: string, factor = 0.9) {
+  const normalized = hex.trim().replace(/^#/, "");
+  const short = /^[0-9a-fA-F]{3}$/;
+  const long = /^[0-9a-fA-F]{6}$/;
+  if (!short.test(normalized) && !long.test(normalized)) return "#1a1a1a";
+  const full = short.test(normalized)
+    ? normalized
+        .split("")
+        .map((ch) => ch + ch)
+        .join("")
+    : normalized;
+  const rBase = Number.parseInt(full.slice(0, 2), 16);
+  const gBase = Number.parseInt(full.slice(2, 4), 16);
+  const bBase = Number.parseInt(full.slice(4, 6), 16);
+  const r = Math.max(0, Math.min(255, Math.round(rBase * factor)));
+  const g = Math.max(0, Math.min(255, Math.round(gBase * factor)));
+  const b = Math.max(0, Math.min(255, Math.round(bBase * factor)));
+  return `#${r.toString(16).padStart(2, "0")}${g
+    .toString(16)
+    .padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
 }
 
 type TrackLite = {
@@ -271,6 +290,8 @@ type AcousticEducationVizProps = {
   gainDbMapRef: MutableRefObject<Map<string, number>>;
   flagsRef: MutableRefObject<Flags>;
   roomRef: MutableRefObject<RoomDims>;
+  columns: AcousticColumn[];
+  activeSourceTrackId: string | null;
   showAttenuation: boolean;
   showShadows: boolean;
   showCritical: boolean;
@@ -455,12 +476,16 @@ function CriticalDistanceRing({
 }
 
 function ShadowHatch({
-  trackId,
+  sourceTrackId,
+  fallbackTrackId,
+  column,
   trackRefs,
   flagsRef,
   roomRef,
 }: {
-  trackId: string;
+  sourceTrackId: string | null;
+  fallbackTrackId: string | null;
+  column: AcousticColumn;
   trackRefs: RefObject<Map<string, Object3D>>;
   flagsRef: MutableRefObject<Flags>;
   roomRef: MutableRefObject<RoomDims>;
@@ -480,22 +505,25 @@ function ShadowHatch({
     g.visible = flagsRef.current.shadows;
     if (!flagsRef.current.shadows) return;
 
+    const trackId = sourceTrackId ?? fallbackTrackId;
+    if (!trackId) return;
     const obj = trackRefs.current?.get(trackId);
     if (!obj) return;
 
     obj.getWorldPosition(tempWorld);
     const sx = tempWorld.x;
+    const sy = tempWorld.y;
     const sz = tempWorld.z;
     const { width, depth } = roomRef.current;
     const halfW = width / 2;
     const halfD = depth / 2;
-    const ox = OBSTACLE_CENTER.x;
-    const oz = OBSTACLE_CENTER.z;
+    const ox = column.position[0];
+    const oz = column.position[2];
 
     const now = performance.now();
     if (now - lastUpdateMs.current < 120) return;
 
-    const key = `${(Math.round(sx * 5) / 5).toFixed(2)}_${(Math.round(sz * 5) / 5).toFixed(2)}_${halfW.toFixed(1)}_${halfD.toFixed(1)}_${roomRef.current.materialAlpha.toFixed(2)}`;
+    const key = `${trackId}_${(Math.round(sx * 5) / 5).toFixed(2)}_${(Math.round(sy * 5) / 5).toFixed(2)}_${(Math.round(sz * 5) / 5).toFixed(2)}_${(Math.round(ox * 5) / 5).toFixed(2)}_${(Math.round(oz * 5) / 5).toFixed(2)}_${halfW.toFixed(1)}_${halfD.toFixed(1)}_${roomRef.current.materialAlpha.toFixed(2)}`;
     if (key === lastKey.current) return;
     lastKey.current = key;
     lastUpdateMs.current = now;
@@ -505,15 +533,13 @@ function ShadowHatch({
     );
 
     setPoints(
-      buildHatchSegmentPoints(
+      buildConeHatchSegmentPoints(
         sx,
+        sy,
         sz,
         halfW,
         halfD,
-        ox,
-        oz,
-        OBSTACLE_RADIUS,
-        0.55
+        column
       )
     );
   });
@@ -523,13 +549,13 @@ function ShadowHatch({
       <Line
         segments
         points={points}
-        color={INK}
+        color={darkenHex(column.color)}
         lineWidth={1}
         dashed
         dashSize={0.12}
         gapSize={0.09}
         transparent
-        opacity={hatchOpacity}
+        opacity={hatchOpacity * 0.5}
         depthWrite={false}
       />
     </group>
@@ -677,21 +703,25 @@ export function AcousticEducationViz({
   gainDbMapRef,
   flagsRef,
   roomRef,
+  columns,
+  activeSourceTrackId,
   showAttenuation,
   showShadows,
   showCritical,
 }: AcousticEducationVizProps) {
   const fontUrl = useItimFontUrl();
+  const frameOccluderCountByTrackRef = useRef<Map<string, number>>(new Map());
 
   useFrame(() => {
     const flags = flagsRef.current;
-    if (!flags.shadows) return;
     const listener = listenerRef.current;
     if (!listener) return;
     listener.getWorldPosition(tempListener);
-    const ox = OBSTACLE_CENTER.x;
-    const oz = OBSTACLE_CENTER.z;
     const materialAlpha = roomRef.current.materialAlpha;
+    const fallbackTrackId = tracksRef.current[0]?.id ?? null;
+    const activeTrackId = activeSourceTrackId ?? fallbackTrackId;
+    const frameOccluderCounts = frameOccluderCountByTrackRef.current;
+    frameOccluderCounts.clear();
 
     for (const t of tracksRef.current) {
       const obj = trackRefs.current?.get(t.id);
@@ -699,21 +729,129 @@ export function AcousticEducationViz({
       obj.getWorldPosition(tempWorld);
       const sx = tempWorld.x;
       const sz = tempWorld.z;
-      const clarity = computeObstacleShadowClarity(
-        sx,
-        sz,
-        tempListener.x,
-        tempListener.z,
-        ox,
-        oz,
-        OBSTACLE_RADIUS
+      const segX = tempListener.x - sx;
+      const segZ = tempListener.z - sz;
+      const segLenSq = segX * segX + segZ * segZ;
+
+      let lineBlocked = false;
+      let minIntersectClarity = 1;
+      const losses: number[] = [];
+      let cutoffProduct = 1;
+      const intersections: { penetration: number; clarity: number; absorption: number }[] = [];
+      const targetDx = tempListener.x - sx;
+      const targetDz = tempListener.z - sz;
+      const targetLen = Math.hypot(targetDx, targetDz);
+      const rad = (t.rotationDeg * Math.PI) / 180;
+      const forwardX = Math.sin(rad);
+      const forwardZ = -Math.cos(rad);
+      const targetDirX = targetLen > 1e-5 ? targetDx / targetLen : forwardX;
+      const targetDirZ = targetLen > 1e-5 ? targetDz / targetLen : forwardZ;
+      const dot = Math.max(-1, Math.min(1, forwardX * targetDirX + forwardZ * targetDirZ));
+      const alpha = t.isDirectivityEnabled ? Math.acos(dot) : 0;
+      const directivityFilterMultiplier = t.isDirectivityEnabled
+        ? 1 - 0.5 * (alpha / Math.PI)
+        : 1;
+      const directivityGainMultiplier = t.isDirectivityEnabled
+        ? 1 - 0.35 * (alpha / Math.PI)
+        : 1;
+
+      for (const column of columns) {
+        const ox = column.position[0];
+        const oz = column.position[2];
+        const radius = column.radius || OBSTACLE_RADIUS;
+        if (segLenSq <= 1e-6) continue;
+
+        const obsX = ox - sx;
+        const obsZ = oz - sz;
+        const tSeg = (obsX * segX + obsZ * segZ) / segLenSq;
+        if (tSeg <= 0.001 || tSeg >= 0.999) continue;
+
+        const closestX = sx + segX * tSeg;
+        const closestZ = sz + segZ * tSeg;
+        const clearance = Math.hypot(ox - closestX, oz - closestZ);
+        if (clearance > radius) continue;
+
+        lineBlocked = true;
+        const penetration = Math.max(0, Math.min(1, 1 - clearance / Math.max(0.001, radius)));
+        const clarity = computeObstacleShadowClarity(
+          sx,
+          sz,
+          tempListener.x,
+          tempListener.z,
+          ox,
+          oz,
+          radius
+        );
+        minIntersectClarity = Math.min(minIntersectClarity, clarity);
+        const absorption =
+          MATERIAL_REGISTRY[column.materialPreset]?.absorption ?? materialAlpha;
+        intersections.push({ penetration, clarity, absorption });
+        const nominalLossDb = -(3 + penetration * 3) * (1 - absorption * 0.35);
+        losses.push(nominalLossDb);
+        cutoffProduct *= Math.max(0.05, 1 - 0.45 * penetration);
+      }
+
+      let totalLossDb = 0;
+      if (losses.length > 0) {
+        const sorted = [...losses].sort((a, b) => a - b);
+        const strongest = sorted[0] ?? 0;
+        const rest = sorted.slice(1).reduce((sum, v) => sum + v * 0.3, 0);
+        totalLossDb = strongest + rest;
+      }
+
+      const clarityFromLoss = intersections.length > 0 ? Math.pow(10, totalLossDb / 20) : 1;
+      const combinedClarity = Math.max(
+        0,
+        Math.min(1, Math.min(minIntersectClarity, clarityFromLoss))
       );
-      updateTrackShadowOcclusion(t.id, clarity, materialAlpha);
+      const targetCutoffHz = Math.max(250, 20000 * cutoffProduct);
+      const finalAudioCutoff = Math.max(
+        250,
+        Math.min(20000, targetCutoffHz * directivityFilterMultiplier)
+      );
+      const targetGain = Math.pow(10, totalLossDb / 20);
+      const finalAudioGain = Math.max(
+        0.03,
+        Math.min(1.2, targetGain * directivityGainMultiplier)
+      );
+      frameOccluderCounts.set(t.id, intersections.length);
+      setTrackDynamicAcoustics(t.id, finalAudioCutoff, finalAudioGain);
+
+      if (flags.shadows) {
+        // Keep legacy educational shadow telemetry but scope the debug count to active source track.
+        const uiOccluderCount = t.id === activeTrackId ? intersections.length : 0;
+        updateTrackShadowOcclusion(
+          t.id,
+          combinedClarity,
+          materialAlpha,
+          lineBlocked,
+          targetCutoffHz,
+          Math.abs(totalLossDb),
+          uiOccluderCount
+        );
+      }
     }
   });
 
+  const fallbackTrackId = tracks[0]?.id ?? null;
+
   return (
     <group>
+      {showShadows && columns.length > 0 ? (
+        <>
+          {columns.map((column) => (
+            <ShadowHatch
+              key={`column-shadow-${column.id}`}
+              sourceTrackId={activeSourceTrackId}
+              fallbackTrackId={fallbackTrackId}
+              column={column}
+              trackRefs={trackRefs}
+              flagsRef={flagsRef}
+              roomRef={roomRef}
+            />
+          ))}
+        </>
+      ) : null}
       {tracks.map((t) => (
         <group key={t.id}>
           {showAttenuation ? (
@@ -732,14 +870,6 @@ export function AcousticEducationViz({
               flagsRef={flagsRef}
               roomRef={roomRef}
               fontUrl={fontUrl}
-            />
-          ) : null}
-          {showShadows ? (
-            <ShadowHatch
-              trackId={t.id}
-              trackRefs={trackRefs}
-              flagsRef={flagsRef}
-              roomRef={roomRef}
             />
           ) : null}
           <ReflectionRays

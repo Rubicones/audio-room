@@ -1,17 +1,10 @@
 import { Edges, Line, Text } from "@react-three/drei";
-import type { RoomMaterialPreset } from "./TrackStore";
+import { ACOUSTIC_MATERIALS, type RoomMaterialPreset } from "./acousticMaterials";
 import { useItimFontUrl } from "./sketch";
 
 const INK = "#1a1a1a";
 const WALL_LINE_WIDTH = 3;
 const CORNER_INSET = 0.012;
-
-const MATERIAL_LABELS: Record<RoomMaterialPreset, string> = {
-  brick: "BRICK",
-  wood: "WOOD",
-  "acoustic-foam": "FOAM",
-  marble: "MARBLE",
-};
 
 type RoomProps = {
   scale: [number, number, number];
@@ -25,10 +18,22 @@ export function Room({ scale, materialPreset }: RoomProps) {
 
   const halfW = width / 2;
   const halfD = depth / 2;
-  const label = MATERIAL_LABELS[materialPreset];
+  const material = ACOUSTIC_MATERIALS[materialPreset];
   const fontUrl = useItimFontUrl();
-
-  const labelFontSize = Math.min(height * 0.42, Math.min(halfW, halfD) * 0.3);
+  const label = material.name.toUpperCase();
+  const alphaLabel = material.alpha;
+  const fitLabelFontSize = (wallSpan: number) => {
+    const usableSpan = wallSpan * 0.86;
+    const approxCharWidth = 0.68;
+    return Math.max(
+      0.18,
+      Math.min(height * 0.42, usableSpan / Math.max(1, label.length * approxCharWidth))
+    );
+  };
+  const backLabelFontSize = fitLabelFontSize(width);
+  const sideLabelFontSize = fitLabelFontSize(depth);
+  const backAlphaFontSize = Math.max(0.11, backLabelFontSize * 0.34);
+  const sideAlphaFontSize = Math.max(0.11, sideLabelFontSize * 0.34);
   const sizeKey = `${width.toFixed(2)}x${height.toFixed(2)}x${depth.toFixed(2)}`;
 
   // Inset slightly toward room interior so the lines render in front of the
@@ -101,7 +106,7 @@ export function Room({ scale, materialPreset }: RoomProps) {
 
       <Text
         position={[0, height * 0.55, -halfD + 0.015]}
-        fontSize={labelFontSize}
+        fontSize={backLabelFontSize}
         color={INK}
         anchorX="center"
         anchorY="middle"
@@ -113,9 +118,23 @@ export function Room({ scale, materialPreset }: RoomProps) {
       </Text>
 
       <Text
+        position={[0, height * 0.39, -halfD + 0.015]}
+        fontSize={backAlphaFontSize}
+        color={INK}
+        fillOpacity={0.75}
+        anchorX="center"
+        anchorY="middle"
+        font={fontUrl}
+        letterSpacing={0.02}
+        outlineWidth={0}
+      >
+        {alphaLabel}
+      </Text>
+
+      <Text
         position={[-halfW + 0.015, height * 0.55, 0]}
         rotation={[0, Math.PI / 2, 0]}
-        fontSize={labelFontSize}
+        fontSize={sideLabelFontSize}
         color={INK}
         anchorX="center"
         anchorY="middle"
@@ -124,6 +143,21 @@ export function Room({ scale, materialPreset }: RoomProps) {
         outlineWidth={0}
       >
         {label}
+      </Text>
+
+      <Text
+        position={[-halfW + 0.015, height * 0.39, 0]}
+        rotation={[0, Math.PI / 2, 0]}
+        fontSize={sideAlphaFontSize}
+        color={INK}
+        fillOpacity={0.75}
+        anchorX="center"
+        anchorY="middle"
+        font={fontUrl}
+        letterSpacing={0.02}
+        outlineWidth={0}
+      >
+        {alphaLabel}
       </Text>
     </group>
   );

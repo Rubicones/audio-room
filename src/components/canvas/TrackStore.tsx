@@ -2,10 +2,12 @@
 
 import { createContext, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { Track, TrackConfig, Vec3 } from "./types";
+import type { AcousticColumn, Track, TrackConfig, Vec3 } from "./types";
+import type { RoomMaterialPreset } from "./acousticMaterials";
+import { createDefaultColumn } from "./obstacleConstants";
+export { ACOUSTIC_MATERIALS } from "./acousticMaterials";
 
 type RoomScale = [number, number, number];
-export type RoomMaterialPreset = "brick" | "wood" | "acoustic-foam" | "marble";
 
 type AcousticSettings = {
   roomMaterial: RoomMaterialPreset;
@@ -20,6 +22,7 @@ type AcousticSettings = {
 type TrackStoreValue = {
   tracks: Track[];
   roomScale: RoomScale;
+  columns: AcousticColumn[];
   acousticSettings: AcousticSettings;
   addTracks: (configs: TrackConfig[]) => void;
   removeTrack: (trackId: string) => void;
@@ -39,6 +42,9 @@ type TrackStoreValue = {
   setTrackGainDb: (trackId: string, gainDb: number) => void;
   toggleTrackDirectivity: (trackId: string) => void;
   setTrackRotationDeg: (trackId: string, value: number) => void;
+  addColumn: (position?: Vec3) => string;
+  removeColumn: (columnId: string) => void;
+  updateColumn: (columnId: string, updates: Partial<AcousticColumn>) => void;
 };
 
 const TrackStoreContext = createContext<TrackStoreValue | null>(null);
@@ -70,6 +76,7 @@ function createTrack(config: TrackConfig): Track {
 export function TrackStoreProvider({ children }: { children: ReactNode }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [roomScale, setRoomScale] = useState<RoomScale>([1, 1, 1]);
+  const [columns, setColumns] = useState<AcousticColumn[]>([createDefaultColumn(0)]);
   const [acousticSettings, setAcousticSettings] = useState<AcousticSettings>({
     roomMaterial: "brick",
     enableRoomReverb: true,
@@ -84,6 +91,7 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
     () => ({
       tracks,
       roomScale,
+      columns,
       acousticSettings,
       addTracks: (configs) => {
         setTracks((current) => [
@@ -173,8 +181,28 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
           )
         );
       },
+      addColumn: (position) => {
+        const next = createDefaultColumn(columns.length, position);
+        setColumns((current) => [...current, next]);
+        return next.id;
+      },
+      removeColumn: (columnId) => {
+        setColumns((current) => current.filter((column) => column.id !== columnId));
+      },
+      updateColumn: (columnId, updates) => {
+        setColumns((current) =>
+          current.map((column) => {
+            if (column.id !== columnId) return column;
+            return {
+              ...column,
+              ...updates,
+              position: updates.position ?? column.position,
+            };
+          })
+        );
+      },
     }),
-    [tracks, roomScale, acousticSettings]
+    [tracks, roomScale, columns, acousticSettings]
   );
 
   return <TrackStoreContext.Provider value={value}>{children}</TrackStoreContext.Provider>;

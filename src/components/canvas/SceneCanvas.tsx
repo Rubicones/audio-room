@@ -1,7 +1,7 @@
 "use client";
 
 import { Canvas, useFrame } from "@react-three/fiber";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { NoToneMapping, Object3D, Quaternion, Vector3 } from "three";
 import { AcousticEducationViz } from "./AcousticEducationViz";
 import {
@@ -26,11 +26,13 @@ import { TrackNodes } from "./TrackNodes";
 type SceneContentsProps = {
   view: CameraView;
   zoomSteps: number;
+  onActiveColumnChange?: (columnId: string | null) => void;
 };
 
 type SceneCanvasProps = {
   view: CameraView;
   zoomSteps: number;
+  onActiveColumnChange?: (columnId: string | null) => void;
 };
 
 type TrackLite = {
@@ -54,9 +56,16 @@ type RoomDims = {
   materialAlpha: number;
 };
 
-function SceneContents({ view, zoomSteps }: SceneContentsProps) {
-  const { tracks, roomScale, acousticSettings, setRt60Ms, updateTrackPosition } =
-    useTrackStore();
+function SceneContents({ view, zoomSteps, onActiveColumnChange }: SceneContentsProps) {
+  const {
+    tracks,
+    roomScale,
+    columns,
+    acousticSettings,
+    setRt60Ms,
+    updateTrackPosition,
+    updateColumn,
+  } = useTrackStore();
   const worldPosition = useRef(new Vector3());
   const worldQuaternion = useRef(new Quaternion());
   const worldForward = useRef(new Vector3(0, 0, -1));
@@ -66,6 +75,7 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
   const listenerUpTuple = useRef<[number, number, number]>([0, 1, 0]);
   const trackPositionTuple = useRef<[number, number, number]>([0, 0, 0]);
   const directivityTuple = useRef<[number, number, number]>([0, 0, -1]);
+  const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
 
   const listenerRef = useRef<Object3D | null>(null);
   const trackRefs = useRef<Map<string, Object3D>>(new Map());
@@ -227,7 +237,17 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
 
       <DimensionLines scale={roomScale} />
 
-      {acousticSettings.showAcousticShadows ? <ObstacleColumn /> : null}
+      {acousticSettings.showAcousticShadows
+        ? columns.map((column) => (
+            <ObstacleColumn
+              key={column.id}
+              column={column}
+              roomScale={roomScale}
+              onPositionChange={(position) => updateColumn(column.id, { position })}
+              onSelect={onActiveColumnChange}
+            />
+          ))
+        : null}
 
       <TrackNodes
         tracks={tracks}
@@ -237,6 +257,7 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
           listenerRef.current = object;
         }}
         onTrackRef={handleTrackRef}
+        onDraggingTrackChange={setDraggingTrackId}
       />
 
       <AcousticEducationViz
@@ -252,6 +273,8 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
         gainDbMapRef={gainDbMapRef}
         flagsRef={flagsRef}
         roomRef={roomRef}
+        columns={columns}
+        activeSourceTrackId={draggingTrackId}
         showAttenuation={acousticSettings.showAttenuationZones}
         showShadows={acousticSettings.showAcousticShadows}
         showCritical={acousticSettings.showCriticalDistance}
@@ -260,7 +283,7 @@ function SceneContents({ view, zoomSteps }: SceneContentsProps) {
   );
 }
 
-export function SceneCanvas({ view, zoomSteps }: SceneCanvasProps) {
+export function SceneCanvas({ view, zoomSteps, onActiveColumnChange }: SceneCanvasProps) {
   return (
     <Canvas
       flat
@@ -275,7 +298,11 @@ export function SceneCanvas({ view, zoomSteps }: SceneCanvasProps) {
         gl.setClearColor(0x000000, 0);
       }}
     >
-      <SceneContents view={view} zoomSteps={zoomSteps} />
+      <SceneContents
+        view={view}
+        zoomSteps={zoomSteps}
+        onActiveColumnChange={onActiveColumnChange}
+      />
     </Canvas>
   );
 }

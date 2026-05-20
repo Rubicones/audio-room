@@ -7,6 +7,7 @@ import * as Tone from "tone";
 import {
   disposeAudioEngine,
   getTrackAcousticData,
+  getTrackDiagnostics,
   isTrackLoaded,
   getTrackLoadingState,
   type TrackAcousticData,
@@ -19,6 +20,10 @@ import {
   TrackStoreProvider,
   useTrackStore,
 } from "@/components/canvas/TrackStore";
+import {
+  ACOUSTIC_MATERIALS,
+  type RoomMaterialPreset,
+} from "@/components/canvas/acousticMaterials";
 import type { TrackConfig } from "@/components/canvas/types";
 import { PlayerBar } from "@/components/ui/PlayerBar";
 import { SketchSlider } from "@/components/ui/SketchSlider";
@@ -236,9 +241,13 @@ function renderSummaryRows(
 function MixerPage() {
   const {
     tracks,
+    columns,
     roomScale,
     acousticSettings,
     addTracks,
+    addColumn,
+    removeColumn,
+    updateColumn,
     removeTrack,
     updateTrackName,
     toggleTrackMute,
@@ -271,6 +280,7 @@ function MixerPage() {
   const [liveTrackData, setLiveTrackData] = useState<Record<string, TrackAcousticData>>({});
   const [trackLoadedMap, setTrackLoadedMap] = useState<Record<string, boolean>>({});
   const [copyToast, setCopyToast] = useState<string | null>(null);
+  const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
   const demoAutoStartedRef = useRef(false);
 
   useEffect(() => () => disposeAudioEngine(), []);
@@ -421,6 +431,8 @@ function MixerPage() {
     summaryTrackId != null ? tracks.findIndex((track) => track.id === summaryTrackId) + 1 : 0;
   const playbackDisabled =
     tracks.length === 0 || !isBootReady || trackBuffersLoading || transportLoading;
+  const diagnostics = summaryTrackId ? getTrackDiagnostics(summaryTrackId) : null;
+  const showDevDiagnostics = process.env.NODE_ENV === "development";
 
   const handleSummaryCopy = async (label: string, value: string) => {
     try {
@@ -505,19 +517,14 @@ function MixerPage() {
               className={styles.select}
               value={acousticSettings.roomMaterial}
               onChange={(e) =>
-                setRoomMaterial(
-                  e.target.value as
-                    | "brick"
-                    | "wood"
-                    | "acoustic-foam"
-                    | "marble"
-                )
+                setRoomMaterial(e.target.value as RoomMaterialPreset)
               }
             >
-              <option value="brick">brick</option>
-              <option value="wood">wood</option>
-              <option value="acoustic-foam">foam</option>
-              <option value="marble">marble</option>
+              {Object.entries(ACOUSTIC_MATERIALS).map(([key, value]) => (
+                <option key={key} value={key}>
+                  {value.name}
+                </option>
+              ))}
             </select>
             <span className={styles.selectChevron} aria-hidden>
               ▾
@@ -570,6 +577,65 @@ function MixerPage() {
           </button>
         </div>
 
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.heading}>Columns</h2>
+        <button
+          type="button"
+          className={styles.columnAddBtn}
+          onClick={() => {
+            const id = addColumn();
+            setActiveColumnId(id);
+          }}
+        >
+          Add Column
+        </button>
+        <ul className={styles.columnList}>
+          {columns.map((column, index) => (
+            <li
+              key={column.id}
+              className={`${styles.columnRow} ${
+                activeColumnId === column.id ? styles.columnRowActive : ""
+              }`}
+              onPointerEnter={() => setActiveColumnId(column.id)}
+            >
+              <button
+                type="button"
+                className={styles.columnMeta}
+                onClick={() => setActiveColumnId(column.id)}
+                title={`Select column ${index + 1}`}
+              >
+                <span
+                  className={styles.columnColorDot}
+                  style={{ backgroundColor: column.color }}
+                />
+                <span className={styles.columnName}>{`Column ${index + 1}`}</span>
+              </button>
+              <div
+                className={styles.columnColorBadge}
+                style={{ backgroundColor: column.color }}
+                title={`Color for column ${index + 1}`}
+              >
+                <input
+                  type="color"
+                  className={styles.columnColorInputNative}
+                  aria-label={`Color for column ${index + 1}`}
+                  value={column.color}
+                  onChange={(e) => updateColumn(column.id, { color: e.target.value })}
+                />
+              </div>
+              <button
+                type="button"
+                className={styles.columnDeleteBtn}
+                aria-label={`Delete column ${index + 1}`}
+                onClick={() => removeColumn(column.id)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className={styles.section}>
@@ -827,7 +893,13 @@ function MixerPage() {
       ) : null}
 
       <section className={styles.canvasWrap}>
-        {isBootReady ? <SceneCanvas view={view} zoomSteps={zoomSteps} /> : null}
+        {isBootReady ? (
+          <SceneCanvas
+            view={view}
+            zoomSteps={zoomSteps}
+            onActiveColumnChange={setActiveColumnId}
+          />
+        ) : null}
       </section>
 
       {!isNarrowScreen ? (
@@ -870,6 +942,41 @@ function MixerPage() {
           ) : (
             <p className={styles.summaryEmpty}>Pick a track via the info button.</p>
           )}
+          {showDevDiagnostics && diagnostics ? (
+            <div className={styles.devDiagnosticsRows}>
+              <div className={styles.summaryRowNoCopy}>
+                <span className={styles.summaryKey}>Raw Distance</span>
+                <span className={styles.summaryValue}>{diagnostics.distanceM.toFixed(2)}m</span>
+              </div>
+              <div className={styles.summaryRowNoCopy}>
+                <span className={styles.summaryKey}>Attenuation</span>
+                <span className={styles.summaryValue}>{diagnostics.attenuationDb.toFixed(1)} dB</span>
+              </div>
+              <div className={styles.summaryRowNoCopy}>
+                <span className={styles.summaryKey}>Directivity Angle / Gain</span>
+                <span className={styles.summaryValue}>
+                  {diagnostics.directivityAngleDeg.toFixed(1)}deg /{" "}
+                  {diagnostics.directivityGainDb.toFixed(1)} dB
+                </span>
+              </div>
+              <div className={styles.summaryRowNoCopy}>
+                <span className={styles.summaryKey}>Occlusion Filter</span>
+                <span className={styles.summaryValue}>
+                  {Math.round(diagnostics.lowPassCutoffHz)} Hz
+                </span>
+              </div>
+              <div className={styles.summaryRowNoCopy}>
+                <span className={styles.summaryKey}>Occlusion Loss</span>
+                <span className={styles.summaryValue}>
+                  {diagnostics.occlusionLossDb.toFixed(1)} dB
+                </span>
+              </div>
+              <div className={styles.summaryRowNoCopy}>
+                <span className={styles.summaryKey}>Blocking Columns</span>
+                <span className={styles.summaryValue}>{diagnostics.occluderCount}</span>
+              </div>
+            </div>
+          ) : null}
         </aside>
       ) : null}
 
