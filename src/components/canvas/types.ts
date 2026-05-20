@@ -92,11 +92,23 @@ export type Track = Omit<TrackConfig, "gainDb"> & {
   showShadows: boolean;
 };
 
-export interface AcousticColumn {
+export type ObstacleType = "cylinder" | "box" | "wall-with-window";
+
+export interface LineSegment2D {
+  start: [number, number];
+  end: [number, number];
+}
+
+export interface AcousticObstacle {
   id: string;
+  type: ObstacleType;
   position: Vec3;
+  rotationDeg: number;
+  windowOffsetPct: number;
   radius: number;
   height: number;
   color: string;
   materialPreset: RoomMaterialKey;
+  width?: number;
+  depth?: number;
 }

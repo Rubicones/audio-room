@@ -24,13 +24,22 @@ import {
   ACOUSTIC_MATERIALS,
   type RoomMaterialPreset,
 } from "@/components/canvas/acousticMaterials";
-import type { TrackConfig } from "@/components/canvas/types";
+import {
+  type ObstacleType,
+  type TrackConfig,
+} from "@/components/canvas/types";
+import { ROOM_CENTER_POSITION } from "@/components/canvas/obstacleConstants";
 import { PlayerBar } from "@/components/ui/PlayerBar";
 import { SketchSlider } from "@/components/ui/SketchSlider";
 import { Landing } from "./Landing";
 import styles from "./page.module.css";
 
 const PALETTE = ["#E16A6A", "#E5B94A", "#5BC489", "#7B5BE6", "#4A90E2", "#E07A5F"];
+const OBSTACLE_TYPE_OPTIONS: Array<{ id: ObstacleType; label: string }> = [
+  { id: "cylinder", label: "Cylinder" },
+  { id: "box", label: "Box" },
+  { id: "wall-with-window", label: "Wall with Window" },
+];
 
 // All stems in `public/demo_track/` — loaded when the user clicks
 // "Set up the demo track".
@@ -241,13 +250,13 @@ function renderSummaryRows(
 function MixerPage() {
   const {
     tracks,
-    columns,
+    obstacles,
     roomScale,
     acousticSettings,
     addTracks,
-    addColumn,
-    removeColumn,
-    updateColumn,
+    addObstacle,
+    removeObstacle,
+    updateObstacle,
     removeTrack,
     updateTrackName,
     toggleTrackMute,
@@ -263,6 +272,7 @@ function MixerPage() {
     toggleTrackDirectivity,
     toggleTrackShadows,
     setTrackRotationDeg,
+    setObstacleRotationDeg,
   } = useTrackStore();
   const [view, setView] = useState<CameraView>("isometric");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -281,7 +291,7 @@ function MixerPage() {
   const [liveTrackData, setLiveTrackData] = useState<Record<string, TrackAcousticData>>({});
   const [trackLoadedMap, setTrackLoadedMap] = useState<Record<string, boolean>>({});
   const [copyToast, setCopyToast] = useState<string | null>(null);
-  const [activeColumnId, setActiveColumnId] = useState<string | null>(null);
+  const [activeObstacleId, setActiveObstacleId] = useState<string | null>(null);
   const demoAutoStartedRef = useRef(false);
 
   useEffect(() => () => disposeAudioEngine(), []);
@@ -582,59 +592,177 @@ function MixerPage() {
 
       {acousticSettings.showAcousticShadows ? (
         <section className={styles.section}>
-          <h2 className={styles.heading}>Columns</h2>
-          <button
-            type="button"
-            className={styles.columnAddBtn}
-            onClick={() => {
-              const id = addColumn();
-              setActiveColumnId(id);
-            }}
-          >
-            Add Column
-          </button>
+          <h2 className={styles.heading}>Obstacles</h2>
+          <div className={styles.obstacleAddRow}>
+            <button
+              type="button"
+              className={styles.columnAddBtn}
+              onClick={() => {
+                const id = addObstacle(ROOM_CENTER_POSITION, "cylinder");
+                setActiveObstacleId(id);
+              }}
+            >
+              Add Obstacle
+            </button>
+          </div>
           <ul className={styles.columnList}>
-            {columns.map((column, index) => (
+            {obstacles.map((obstacle, index) => (
               <li
-                key={column.id}
+                key={obstacle.id}
                 className={`${styles.columnRow} ${
-                  activeColumnId === column.id ? styles.columnRowActive : ""
+                  activeObstacleId === obstacle.id ? styles.columnRowActive : ""
                 }`}
-                onPointerEnter={() => setActiveColumnId(column.id)}
               >
                 <button
                   type="button"
                   className={styles.columnMeta}
-                  onClick={() => setActiveColumnId(column.id)}
-                  title={`Select column ${index + 1}`}
+                  onClick={() => setActiveObstacleId(obstacle.id)}
+                  title={`Select obstacle ${index + 1}`}
                 >
                   <span
                     className={styles.columnColorDot}
-                    style={{ backgroundColor: column.color }}
+                    style={{ backgroundColor: obstacle.color }}
                   />
-                  <span className={styles.columnName}>{`Column ${index + 1}`}</span>
+                  <span className={styles.columnName}>{`Obstacle ${index + 1}`}</span>
                 </button>
                 <div
                   className={styles.columnColorBadge}
-                  style={{ backgroundColor: column.color }}
-                  title={`Color for column ${index + 1}`}
+                  style={{ backgroundColor: obstacle.color }}
+                  title={`Color for obstacle ${index + 1}`}
                 >
                   <input
                     type="color"
                     className={styles.columnColorInputNative}
-                    aria-label={`Color for column ${index + 1}`}
-                    value={column.color}
-                    onChange={(e) => updateColumn(column.id, { color: e.target.value })}
+                    aria-label={`Color for obstacle ${index + 1}`}
+                    value={obstacle.color}
+                    onChange={(e) => updateObstacle(obstacle.id, { color: e.target.value })}
                   />
                 </div>
                 <button
                   type="button"
                   className={styles.columnDeleteBtn}
-                  aria-label={`Delete column ${index + 1}`}
-                  onClick={() => removeColumn(column.id)}
+                  aria-label={`Delete obstacle ${index + 1}`}
+                  onClick={() => {
+                    removeObstacle(obstacle.id);
+                    if (activeObstacleId === obstacle.id) {
+                      setActiveObstacleId(null);
+                    }
+                  }}
                 >
                   ×
                 </button>
+                <div className={styles.obstacleControls}>
+                  <div className={styles.obstacleControlRow}>
+                    <span className={styles.obstacleControlLabel}>shape</span>
+                    <div className={styles.selectWrap}>
+                      <select
+                        className={styles.select}
+                        value={obstacle.type}
+                        onChange={(e) => {
+                          const nextType = e.target.value as ObstacleType;
+                          if (nextType === "box") {
+                            updateObstacle(obstacle.id, {
+                              type: nextType,
+                              width: 1.2,
+                              depth: 1.2,
+                              rotationDeg: obstacle.rotationDeg,
+                              windowOffsetPct: obstacle.windowOffsetPct,
+                            });
+                            return;
+                          }
+                          if (nextType === "wall-with-window") {
+                            updateObstacle(obstacle.id, {
+                              type: nextType,
+                              width: 2.0,
+                              depth: 0.45,
+                              rotationDeg: obstacle.rotationDeg,
+                              windowOffsetPct: obstacle.windowOffsetPct,
+                            });
+                            return;
+                          }
+                          updateObstacle(obstacle.id, {
+                            type: nextType,
+                            rotationDeg: obstacle.rotationDeg,
+                            windowOffsetPct: obstacle.windowOffsetPct,
+                          });
+                        }}
+                      >
+                        {OBSTACLE_TYPE_OPTIONS.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className={styles.selectChevron} aria-hidden>
+                        ▾
+                      </span>
+                    </div>
+                  </div>
+                  {obstacle.type === "cylinder" ? (
+                    <SketchSlider
+                      label="radius"
+                      value={obstacle.radius}
+                      min={0.2}
+                      max={2}
+                      step={0.05}
+                      onChange={(v) => updateObstacle(obstacle.id, { radius: v })}
+                      formatValue={(v) => `${v.toFixed(2)}m`}
+                    />
+                  ) : null}
+                  {obstacle.type === "box" ? (
+                    <div className={styles.obstacleSliderGrid}>
+                      <SketchSlider
+                        label="width"
+                        value={obstacle.width ?? 1.2}
+                        min={0.3}
+                        max={8}
+                        step={0.1}
+                        onChange={(v) => updateObstacle(obstacle.id, { width: v })}
+                        formatValue={(v) => `${v.toFixed(2)}m`}
+                      />
+                      <SketchSlider
+                        label="depth"
+                        value={obstacle.depth ?? 1.2}
+                        min={0.3}
+                        max={6}
+                        step={0.1}
+                        onChange={(v) => updateObstacle(obstacle.id, { depth: v })}
+                        formatValue={(v) => `${v.toFixed(2)}m`}
+                      />
+                    </div>
+                  ) : null}
+                  {obstacle.type === "wall-with-window" ? (
+                    <div className={styles.obstacleSliderGrid}>
+                      <SketchSlider
+                        label="window width"
+                        value={obstacle.width ?? 2}
+                        min={0.2}
+                        max={8}
+                        step={0.05}
+                        onChange={(v) => updateObstacle(obstacle.id, { width: v })}
+                        formatValue={(v) => `${v.toFixed(2)}m`}
+                      />
+                      <SketchSlider
+                        label="rotation"
+                        value={obstacle.rotationDeg}
+                        min={0}
+                        max={359}
+                        step={1}
+                        onChange={(v) => setObstacleRotationDeg(obstacle.id, v)}
+                        formatValue={(v) => `${Math.round(v)}deg`}
+                      />
+                      <SketchSlider
+                        label="window offset"
+                        value={obstacle.windowOffsetPct}
+                        min={0.05}
+                        max={0.95}
+                        step={0.01}
+                        onChange={(v) => updateObstacle(obstacle.id, { windowOffsetPct: v })}
+                        formatValue={(v) => `${Math.round(v * 100)}%`}
+                      />
+                    </div>
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>
@@ -914,7 +1042,7 @@ function MixerPage() {
           <SceneCanvas
             view={view}
             zoomSteps={zoomSteps}
-            onActiveColumnChange={setActiveColumnId}
+          onActiveObstacleChange={setActiveObstacleId}
           />
         ) : null}
       </section>

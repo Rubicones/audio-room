@@ -88,6 +88,8 @@ const players = new Map<string, Tone.Player>();
 const trackNodes = new Map<string, TrackNodeBundle>();
 const trackPositions = new Map<string, [number, number, number]>();
 const pendingTrackPositions = new Map<string, { x: number; y: number; z: number }>();
+const trackDiffractionOverrides = new Map<string, { x: number; y: number; z: number }>();
+const ensureTrackAudioPromises = new Map<string, Promise<void>>();
 const trackMixState = new Map<string, { muted: boolean; solo: boolean }>();
 const trackDirectivityState = new Map<
   string,
@@ -309,63 +311,104 @@ function setListenerTransform(
 
 async function ensureTrackAudio(track: Track) {
   await ensureResonanceCtor();
-  const { resonanceScene, audioContext } = getEngineState();
   if (typeof track.audioUrl !== "string" || track.audioUrl.trim().length === 0) {
     console.warn(`Skipping track "${track.name}" because audioUrl is missing.`);
     return;
   }
   trackIds.add(track.id);
   if (trackNodes.has(track.id) && sources.has(track.id) && players.has(track.id)) return;
+  const pending = ensureTrackAudioPromises.get(track.id);
+  if (pending) {
+    await pending;
+    return;
+  }
 
-  const source = resonanceScene.createSource();
-  const player = new Tone.Player({ loop: true, autostart: false });
-  player.mute = false;
+  const loadPromise = (async () => {
+    const { resonanceScene, audioContext } = getEngineState();
+    if (trackNodes.has(track.id) && sources.has(track.id) && players.has(track.id)) return;
 
-  const uiGain = audioContext.createGain();
-  const mixGain = audioContext.createGain();
-  const distanceGain = audioContext.createGain();
-  const shadowOcclusionGain = audioContext.createGain();
-  const dynamicOcclusionGain = audioContext.createGain();
-  const airFilter = audioContext.createBiquadFilter();
-  airFilter.type = "lowpass";
-  airFilter.frequency.value = 20000;
-  airFilter.Q.value = 0.0001;
-  const occlusionFilter = audioContext.createBiquadFilter();
-  const shadowFilter = audioContext.createBiquadFilter();
-  const dynamicOcclusionFilter = audioContext.createBiquadFilter();
-  uiGain.gain.value = Math.max(0.0001, BASE_TRACK_GAIN_LINEAR * gainDbToLinear(track.gainDb));
-  mixGain.gain.value = 1;
-  distanceGain.gain.value = 1;
-  shadowOcclusionGain.gain.value = 1;
-  dynamicOcclusionGain.gain.value = 1;
-  occlusionFilter.type = "lowpass";
-  occlusionFilter.frequency.value = 12000;
-  occlusionFilter.Q.value = 0.7;
-  shadowFilter.type = "lowpass";
-  shadowFilter.frequency.value = 20000;
-  shadowFilter.Q.value = 0.7;
-  dynamicOcclusionFilter.type = "lowpass";
-  dynamicOcclusionFilter.frequency.value = 20000;
-  dynamicOcclusionFilter.Q.value = 0.7;
+    const source = resonanceScene.createSource();
+    const player = new Tone.Player({ loop: true, autostart: false });
+    player.mute = false;
 
-  // Tone node -> native graph -> Resonance source input.
-  player.connect(uiGain);
-  uiGain.connect(mixGain);
-  mixGain.connect(distanceGain);
-  distanceGain.connect(airFilter);
-  airFilter.connect(occlusionFilter);
-  occlusionFilter.connect(shadowOcclusionGain);
-  shadowOcclusionGain.connect(shadowFilter);
-  shadowFilter.connect(dynamicOcclusionFilter);
-  dynamicOcclusionFilter.connect(dynamicOcclusionGain);
-  dynamicOcclusionGain.connect(source.input);
+    const uiGain = audioContext.createGain();
+    const mixGain = audioContext.createGain();
+    const distanceGain = audioContext.createGain();
+    const shadowOcclusionGain = audioContext.createGain();
+    const dynamicOcclusionGain = audioContext.createGain();
+    const airFilter = audioContext.createBiquadFilter();
+    airFilter.type = "lowpass";
+    airFilter.frequency.value = 20000;
+    airFilter.Q.value = 0.0001;
+    const occlusionFilter = audioContext.createBiquadFilter();
+    const shadowFilter = audioContext.createBiquadFilter();
+    const dynamicOcclusionFilter = audioContext.createBiquadFilter();
+    uiGain.gain.value = Math.max(0.0001, BASE_TRACK_GAIN_LINEAR * gainDbToLinear(track.gainDb));
+    mixGain.gain.value = 1;
+    distanceGain.gain.value = 1;
+    shadowOcclusionGain.gain.value = 1;
+    dynamicOcclusionGain.gain.value = 1;
+    occlusionFilter.type = "lowpass";
+    occlusionFilter.frequency.value = 12000;
+    occlusionFilter.Q.value = 0.7;
+    shadowFilter.type = "lowpass";
+    shadowFilter.frequency.value = 20000;
+    shadowFilter.Q.value = 0.7;
+    dynamicOcclusionFilter.type = "lowpass";
+    dynamicOcclusionFilter.frequency.value = 20000;
+    dynamicOcclusionFilter.Q.value = 0.7;
 
-  try {
-    await player.load(track.audioUrl);
-  } catch (error) {
-    console.warn(`Failed to load track "${track.name}" from "${track.audioUrl}"`, error);
-    nodesCleanup(
+    // Tone node -> native graph -> Resonance source input.
+    player.connect(uiGain);
+    uiGain.connect(mixGain);
+    mixGain.connect(distanceGain);
+    distanceGain.connect(airFilter);
+    airFilter.connect(occlusionFilter);
+    occlusionFilter.connect(shadowOcclusionGain);
+    shadowOcclusionGain.connect(shadowFilter);
+    shadowFilter.connect(dynamicOcclusionFilter);
+    dynamicOcclusionFilter.connect(dynamicOcclusionGain);
+    dynamicOcclusionGain.connect(source.input);
+
+    try {
+      await player.load(track.audioUrl);
+    } catch (error) {
+      console.warn(`Failed to load track "${track.name}" from "${track.audioUrl}"`, error);
+      nodesCleanup(
+        player,
+        uiGain,
+        mixGain,
+        distanceGain,
+        shadowOcclusionGain,
+        dynamicOcclusionGain,
+        airFilter,
+        occlusionFilter,
+        shadowFilter,
+        dynamicOcclusionFilter
+      );
+      return;
+    }
+    if (trackNodes.has(track.id) || sources.has(track.id) || players.has(track.id)) {
+      // Guard against racey duplicate loads.
+      nodesCleanup(
+        player,
+        uiGain,
+        mixGain,
+        distanceGain,
+        shadowOcclusionGain,
+        dynamicOcclusionGain,
+        airFilter,
+        occlusionFilter,
+        shadowFilter,
+        dynamicOcclusionFilter
+      );
+      return;
+    }
+    sources.set(track.id, source);
+    players.set(track.id, player);
+    trackNodes.set(track.id, {
       player,
+      source,
       uiGain,
       mixGain,
       distanceGain,
@@ -374,48 +417,38 @@ async function ensureTrackAudio(track: Track) {
       airFilter,
       occlusionFilter,
       shadowFilter,
-      dynamicOcclusionFilter
+      dynamicOcclusionFilter,
+    });
+    dynamicAcousticsState.set(track.id, { cutoffHz: 20000, gain: 1 });
+    // Apply spatial/audio state immediately on decode so sources never start as
+    // temporary full-volume "center" playback before the next frame sync.
+    applyTrackPosition(track.id, {
+      x: track.position[0],
+      y: track.position[1],
+      z: track.position[2],
+    });
+    const rad = (track.rotationDeg * Math.PI) / 180;
+    setTrackDirectivityState(
+      track.id,
+      [Math.sin(rad), 0, -Math.cos(rad)],
+      track.isDirectivityEnabled
     );
-    return;
-  }
-  sources.set(track.id, source);
-  players.set(track.id, player);
-  trackNodes.set(track.id, {
-    player,
-    source,
-    uiGain,
-    mixGain,
-    distanceGain,
-    shadowOcclusionGain,
-    dynamicOcclusionGain,
-    airFilter,
-    occlusionFilter,
-    shadowFilter,
-    dynamicOcclusionFilter,
-  });
-  dynamicAcousticsState.set(track.id, { cutoffHz: 20000, gain: 1 });
-  // Apply spatial/audio state immediately on decode so sources never start as
-  // temporary full-volume "center" playback before the next frame sync.
-  applyTrackPosition(track.id, {
-    x: track.position[0],
-    y: track.position[1],
-    z: track.position[2],
-  });
-  const rad = (track.rotationDeg * Math.PI) / 180;
-  setTrackDirectivityState(
-    track.id,
-    [Math.sin(rad), 0, -Math.cos(rad)],
-    track.isDirectivityEnabled
-  );
-  refreshTrackMix();
+    refreshTrackMix();
 
-  if (isPlaying) {
-    const startAt = Tone.now() + 0.03;
-    try {
-      player.start(startAt, getSyncedOffsetSeconds(player));
-    } catch {
-      // Player may already be started.
+    if (isPlaying) {
+      const startAt = Tone.now() + 0.03;
+      try {
+        player.start(startAt, getSyncedOffsetSeconds(player));
+      } catch {
+        // Player may already be started.
+      }
     }
+  })();
+  ensureTrackAudioPromises.set(track.id, loadPromise);
+  try {
+    await loadPromise;
+  } finally {
+    ensureTrackAudioPromises.delete(track.id);
   }
 }
 
@@ -499,6 +532,8 @@ function pruneTracks(validIds: string[]) {
     diagnosticsLastLogMs.delete(id);
     trackDirectivityState.delete(id);
     trackPositions.delete(id);
+    trackDiffractionOverrides.delete(id);
+    ensureTrackAudioPromises.delete(id);
     pendingTrackPositions.delete(id);
     players.delete(id);
     sources.delete(id);
@@ -516,9 +551,13 @@ function applyTrackPosition(
   const nodes = trackNodes.get(trackId);
   if (!source || !nodes) return;
 
-  const x = -position.x;
-  const y = position.y;
-  const z = position.z;
+  const diffraction = trackDiffractionOverrides.get(trackId);
+  const acousticX = diffraction?.x ?? position.x;
+  const acousticY = diffraction?.y ?? position.y;
+  const acousticZ = diffraction?.z ?? position.z;
+  const x = -acousticX;
+  const y = acousticY;
+  const z = acousticZ;
   source.setPosition(x, y, z);
   const stored = trackPositions.get(trackId);
   if (stored) {
@@ -529,9 +568,9 @@ function applyTrackPosition(
     trackPositions.set(trackId, [position.x, position.y, position.z]);
   }
 
-  const dx = position.x - listenerPosition.x;
-  const dy = position.y - listenerPosition.y;
-  const dz = position.z - listenerPosition.z;
+  const dx = acousticX - listenerPosition.x;
+  const dy = acousticY - listenerPosition.y;
+  const dz = acousticZ - listenerPosition.z;
   const distance = Math.max(0.25, Math.sqrt(dx * dx + dy * dy + dz * dz));
 
   const rolloffFactor = 1;
@@ -573,8 +612,8 @@ function applyTrackPosition(
   const roomHalfWidth = getEngineState().roomDimensions.width / 2;
   const roomHalfDepth = getEngineState().roomDimensions.depth / 2;
   const nearWallDistance = Math.min(
-    roomHalfWidth - Math.abs(position.x),
-    roomHalfDepth - Math.abs(position.z)
+    roomHalfWidth - Math.abs(acousticX),
+    roomHalfDepth - Math.abs(acousticZ)
   );
   // Keep subtle near-wall boost in level to emulate early reflections cheaply.
   const wallBoost = nearWallDistance < 1 ? (1 - Math.max(0, nearWallDistance)) * 0.12 : 0;
@@ -607,6 +646,21 @@ function setTrackPosition(trackId: string, position: [number, number, number]) {
   if (trackPositionRafId === null && typeof window !== "undefined") {
     trackPositionRafId = window.requestAnimationFrame(flushTrackPositions);
   }
+}
+
+function setTrackDiffractionOverride(
+  trackId: string,
+  override: { x: number; y: number; z: number } | null
+) {
+  if (!override) {
+    trackDiffractionOverrides.delete(trackId);
+    return;
+  }
+  trackDiffractionOverrides.set(trackId, {
+    x: override.x,
+    y: override.y,
+    z: override.z,
+  });
 }
 
 function getTrackAcousticData(trackId: string): TrackAcousticData | null {
@@ -740,8 +794,10 @@ function updateRoomAcoustics(
   currentRoomMaterial = materialPreset;
 
   const selected = ACOUSTIC_MATERIALS[materialPreset];
-  const materialAlpha = selected.absorption;
-  const targetId = (selected?.idReal ?? "concrete-block-painted") as ResonanceMaterialId;
+  const bypassMaterial = ACOUSTIC_MATERIALS.foam;
+  const effectiveMaterial = enableRoomReverb ? selected : bypassMaterial;
+  const materialAlpha = effectiveMaterial.absorption;
+  const targetId = (effectiveMaterial?.idReal ?? "transparent") as ResonanceMaterialId;
   const dimensions = {
     width: safeWidth,
     height: safeHeight,
@@ -778,18 +834,21 @@ function updateRoomAcoustics(
   isReverbNodeConnected =
     Boolean(resonanceScene.setRoomProperties) && applyOk && enableRoomReverb;
 
-  const diagnosticLine = `🔊 [foam DIAGNOSTIC] Material Changed -> Key: "${materialPreset}" | Resolved Library ID: "${targetId}" | Context: ${Tone.getContext().state}`;
+  const diagnosticLine = `🔊 [foam DIAGNOSTIC] Material Changed -> Key: "${materialPreset}" | Reverb: ${
+    enableRoomReverb ? "ON" : "OFF"
+  } | Resolved Library ID: "${targetId}" | Context: ${Tone.getContext().state}`;
   if (diagnosticLine !== lastMaterialDiagnostic) {
     lastMaterialDiagnostic = diagnosticLine;
     console.log(diagnosticLine);
   }
 
-  roomGain.gain.value = enableRoomReverb ? 1 : 0.82;
+  // Keep loudness stable; reverb toggle should change room field, not just level.
+  roomGain.gain.value = 1;
 
   const area =
     2 *
     (safeWidth * safeDepth + safeWidth * safeHeight + safeDepth * safeHeight);
-  const absorption = enableRoomReverb ? selected.absorption : Math.max(0.9, selected.absorption);
+  const absorption = effectiveMaterial.absorption;
   const rt60 = Math.max(
     0.12,
     (0.161 * safeWidth * safeHeight * safeDepth) / Math.max(0.01, area * absorption)
@@ -824,6 +883,7 @@ function setEducationalShadowEnabled(enabled: boolean) {
     nodes.dynamicOcclusionGain.gain.setValueAtTime(1, t);
   }
   dynamicAcousticsState.clear();
+  trackDiffractionOverrides.clear();
   shadowOcclusionState.clear();
   shadowLineBlockedState.clear();
   shadowOcclusionLossDbState.clear();
@@ -1079,8 +1139,9 @@ async function toggleTransport() {
   if (nativeAudioContext.state === "suspended") await nativeAudioContext.resume();
   await Tone.start();
   Tone.Destination.volume.value = 0;
+  const currentlyPlaying = isPlaying || Tone.Transport.state === "started";
 
-  if (isPlaying) {
+  if (currentlyPlaying) {
     const pauseAt = Math.max(0, Tone.Transport.seconds);
     pausedTransportSeconds = pauseAt;
     players.forEach((player) => {
@@ -1111,6 +1172,7 @@ async function toggleTransport() {
     }
   });
   Tone.Transport.start();
+  refreshTrackMix();
   isPlaying = true;
   return true;
 }
@@ -1138,6 +1200,8 @@ function disposeAudioEngine() {
   trackIds.clear();
   trackNodes.clear();
   trackPositions.clear();
+  trackDiffractionOverrides.clear();
+  ensureTrackAudioPromises.clear();
   pendingTrackPositions.clear();
   if (trackPositionRafId !== null && typeof window !== "undefined") {
     window.cancelAnimationFrame(trackPositionRafId);
@@ -1254,6 +1318,7 @@ export {
   pruneTracks,
   setListenerTransform,
   setTrackPosition,
+  setTrackDiffractionOverride,
   setTrackDirectivityState,
   setTrackMixState,
   setTrackUiGainDb,

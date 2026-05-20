@@ -274,6 +274,16 @@
   cursor: pointer;
 }
 
+.obstacleAddRow {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.obstacleAddRow .columnAddBtn {
+  width: 100%;
+  min-width: 0;
+}
+
 .columnList {
   list-style: none;
   display: flex;
@@ -286,7 +296,7 @@
 .columnRow {
   display: grid;
   grid-template-columns: 1fr auto auto;
-  align-items: center;
+  align-items: start;
   gap: 8px;
   border: 1px solid rgba(26, 26, 26, 0.22);
   border-radius: 8px;
@@ -354,6 +364,80 @@
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
+}
+
+.obstacleControls {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.obstacleDetailsPanel {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(26, 26, 26, 0.25);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.obstacleControlRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.obstacleControlLabel {
+  font-size: 12px;
+  text-transform: lowercase;
+  opacity: 0.7;
+}
+
+.obstacleControlRow .selectWrap {
+  justify-self: stretch;
+}
+
+.obstacleControlRow .select {
+  width: 100%;
+  min-width: 0;
+}
+
+.obstacleNumericGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.obstacleSliderGrid {
+  display: grid;
+  gap: 6px;
+}
+
+.obstacleNumberField {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  text-transform: lowercase;
+}
+
+.obstacleNumberField input {
+  height: 26px;
+  border: 1px solid rgba(26, 26, 26, 0.35);
+  border-radius: 6px;
+  padding: 0 8px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink, #1a1a1a);
+}
+
+.obstacleRotationRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
 }
 
 .trackCard {

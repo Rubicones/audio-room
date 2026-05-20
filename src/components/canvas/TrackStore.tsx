@@ -2,9 +2,13 @@
 
 import { createContext, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { AcousticColumn, Track, TrackConfig, Vec3 } from "./types";
+import type { AcousticObstacle, ObstacleType, Track, TrackConfig, Vec3 } from "./types";
 import type { RoomMaterialPreset } from "./acousticMaterials";
-import { createDefaultColumn } from "./obstacleConstants";
+import {
+  createDefaultBoxObstacle,
+  createDefaultObstacle,
+  createDefaultWallObstacle,
+} from "./obstacleConstants";
 export { ACOUSTIC_MATERIALS } from "./acousticMaterials";
 
 type RoomScale = [number, number, number];
@@ -22,7 +26,7 @@ type AcousticSettings = {
 type TrackStoreValue = {
   tracks: Track[];
   roomScale: RoomScale;
-  columns: AcousticColumn[];
+  obstacles: AcousticObstacle[];
   acousticSettings: AcousticSettings;
   addTracks: (configs: TrackConfig[]) => void;
   removeTrack: (trackId: string) => void;
@@ -43,9 +47,10 @@ type TrackStoreValue = {
   toggleTrackDirectivity: (trackId: string) => void;
   toggleTrackShadows: (trackId: string) => void;
   setTrackRotationDeg: (trackId: string, value: number) => void;
-  addColumn: (position?: Vec3) => string;
-  removeColumn: (columnId: string) => void;
-  updateColumn: (columnId: string, updates: Partial<AcousticColumn>) => void;
+  setObstacleRotationDeg: (obstacleId: string, value: number) => void;
+  addObstacle: (position?: Vec3, type?: ObstacleType) => string;
+  removeObstacle: (obstacleId: string) => void;
+  updateObstacle: (obstacleId: string, updates: Partial<AcousticObstacle>) => void;
 };
 
 const TrackStoreContext = createContext<TrackStoreValue | null>(null);
@@ -78,7 +83,7 @@ function createTrack(config: TrackConfig, trackIndex: number): Track {
 export function TrackStoreProvider({ children }: { children: ReactNode }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [roomScale, setRoomScale] = useState<RoomScale>([1, 1, 1]);
-  const [columns, setColumns] = useState<AcousticColumn[]>([createDefaultColumn(0)]);
+  const [obstacles, setObstacles] = useState<AcousticObstacle[]>([createDefaultObstacle(0)]);
   const [acousticSettings, setAcousticSettings] = useState<AcousticSettings>({
     roomMaterial: "brick",
     enableRoomReverb: true,
@@ -93,7 +98,7 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
     () => ({
       tracks,
       roomScale,
-      columns,
+      obstacles,
       acousticSettings,
       addTracks: (configs) => {
         setTracks((current) => {
@@ -193,28 +198,55 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
           )
         );
       },
-      addColumn: (position) => {
-        const next = createDefaultColumn(columns.length, position);
-        setColumns((current) => [...current, next]);
+      setObstacleRotationDeg: (obstacleId, value) => {
+        const normalized = ((Math.round(value) % 360) + 360) % 360;
+        setObstacles((current) =>
+          current.map((obstacle) =>
+            obstacle.id === obstacleId ? { ...obstacle, rotationDeg: normalized } : obstacle
+          )
+        );
+      },
+      addObstacle: (position, type = "cylinder") => {
+        const index = obstacles.length;
+        const next =
+          type === "box"
+            ? createDefaultBoxObstacle(index, position)
+            : type === "wall-with-window"
+              ? createDefaultWallObstacle(index, position)
+              : createDefaultObstacle(index, position);
+        setObstacles((current) => [...current, next]);
         return next.id;
       },
-      removeColumn: (columnId) => {
-        setColumns((current) => current.filter((column) => column.id !== columnId));
+      removeObstacle: (obstacleId) => {
+        setObstacles((current) => current.filter((obstacle) => obstacle.id !== obstacleId));
       },
-      updateColumn: (columnId, updates) => {
-        setColumns((current) =>
-          current.map((column) => {
-            if (column.id !== columnId) return column;
+      updateObstacle: (obstacleId, updates) => {
+        setObstacles((current) =>
+          current.map((obstacle) => {
+            if (obstacle.id !== obstacleId) return obstacle;
+            const hasRotation = Object.prototype.hasOwnProperty.call(updates, "rotationDeg");
+            const hasWindowOffset = Object.prototype.hasOwnProperty.call(
+              updates,
+              "windowOffsetPct"
+            );
+            const normalizedRotation = hasRotation
+              ? (((Math.round(updates.rotationDeg ?? 0) % 360) + 360) % 360)
+              : obstacle.rotationDeg;
+            const normalizedWindowOffset = hasWindowOffset
+              ? Math.max(0.05, Math.min(0.95, updates.windowOffsetPct ?? 0.5))
+              : obstacle.windowOffsetPct;
             return {
-              ...column,
+              ...obstacle,
               ...updates,
-              position: updates.position ?? column.position,
+              position: updates.position ?? obstacle.position,
+              rotationDeg: normalizedRotation,
+              windowOffsetPct: normalizedWindowOffset,
             };
           })
         );
       },
     }),
-    [tracks, roomScale, columns, acousticSettings]
+    [tracks, roomScale, obstacles, acousticSettings]
   );
 
   return <TrackStoreContext.Provider value={value}>{children}</TrackStoreContext.Provider>;

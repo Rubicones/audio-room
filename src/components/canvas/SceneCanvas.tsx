@@ -26,13 +26,13 @@ import { TrackNodes } from "./TrackNodes";
 type SceneContentsProps = {
   view: CameraView;
   zoomSteps: number;
-  onActiveColumnChange?: (columnId: string | null) => void;
+  onActiveObstacleChange?: (obstacleId: string | null) => void;
 };
 
 type SceneCanvasProps = {
   view: CameraView;
   zoomSteps: number;
-  onActiveColumnChange?: (columnId: string | null) => void;
+  onActiveObstacleChange?: (obstacleId: string | null) => void;
 };
 
 type TrackLite = {
@@ -57,15 +57,15 @@ type RoomDims = {
   materialAlpha: number;
 };
 
-function SceneContents({ view, zoomSteps, onActiveColumnChange }: SceneContentsProps) {
+function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContentsProps) {
   const {
     tracks,
     roomScale,
-    columns,
+    obstacles,
     acousticSettings,
     setRt60Ms,
     updateTrackPosition,
-    updateColumn,
+    updateObstacle,
   } = useTrackStore();
   const worldPosition = useRef(new Vector3());
   const worldQuaternion = useRef(new Quaternion());
@@ -240,13 +240,13 @@ function SceneContents({ view, zoomSteps, onActiveColumnChange }: SceneContentsP
       <DimensionLines scale={roomScale} />
 
       {acousticSettings.showAcousticShadows
-        ? columns.map((column) => (
+        ? obstacles.map((obstacle) => (
             <ObstacleColumn
-              key={column.id}
-              column={column}
+              key={obstacle.id}
+              obstacle={obstacle}
               roomScale={roomScale}
-              onPositionChange={(position) => updateColumn(column.id, { position })}
-              onSelect={onActiveColumnChange}
+              onPositionChange={(position) => updateObstacle(obstacle.id, { position })}
+              onSelect={onActiveObstacleChange}
             />
           ))
         : null}
@@ -270,13 +270,14 @@ function SceneContents({ view, zoomSteps, onActiveColumnChange }: SceneContentsP
           rotationDeg: t.rotationDeg,
           showShadows: t.showShadows,
         }))}
+        roomScale={roomScale}
         listenerRef={listenerRef}
         trackRefs={trackRefs}
         tracksRef={tracksRef}
         gainDbMapRef={gainDbMapRef}
         flagsRef={flagsRef}
         roomRef={roomRef}
-        columns={columns}
+        obstacles={obstacles}
         activeSourceTrackId={draggingTrackId}
         showAttenuation={acousticSettings.showAttenuationZones}
         showShadows={acousticSettings.showAcousticShadows}
@@ -286,7 +287,7 @@ function SceneContents({ view, zoomSteps, onActiveColumnChange }: SceneContentsP
   );
 }
 
-export function SceneCanvas({ view, zoomSteps, onActiveColumnChange }: SceneCanvasProps) {
+export function SceneCanvas({ view, zoomSteps, onActiveObstacleChange }: SceneCanvasProps) {
   return (
     <Canvas
       flat
@@ -304,7 +305,7 @@ export function SceneCanvas({ view, zoomSteps, onActiveColumnChange }: SceneCanv
       <SceneContents
         view={view}
         zoomSteps={zoomSteps}
-        onActiveColumnChange={onActiveColumnChange}
+        onActiveObstacleChange={onActiveObstacleChange}
       />
     </Canvas>
   );
