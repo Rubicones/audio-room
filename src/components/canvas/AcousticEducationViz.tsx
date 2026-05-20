@@ -1125,7 +1125,7 @@ export function AcousticEducationViz({
     const halfD = roomDepth * 0.5;
     const lineY = FLOOR_Y + 0.02;
     const lines: ShadowRayLine[] = [];
-    const hatchCount = 4;
+    const hatchCount = 8;
 
     for (const sourceTrackId of shadowSourceTrackIds) {
       const sourceObject = trackRefs.current?.get(sourceTrackId);

@@ -77,6 +77,7 @@ function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContent
   const trackPositionTuple = useRef<[number, number, number]>([0, 0, 0]);
   const directivityTuple = useRef<[number, number, number]>([0, 0, -1]);
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
+  const [listenerPosition, setListenerPosition] = useState<[number, number, number]>([0, 0.5, 0]);
 
   const listenerRef = useRef<Object3D | null>(null);
   const trackRefs = useRef<Map<string, Object3D>>(new Map());
@@ -255,6 +256,8 @@ function SceneContents({ view, zoomSteps, onActiveObstacleChange }: SceneContent
         tracks={tracks}
         roomScale={roomScale}
         onTrackDragCommit={onTrackDragCommit}
+        onListenerDragCommit={setListenerPosition}
+        listenerPosition={listenerPosition}
         onListenerRef={(object) => {
           listenerRef.current = object;
         }}

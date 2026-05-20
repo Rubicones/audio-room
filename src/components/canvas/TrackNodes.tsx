@@ -1,5 +1,6 @@
 import { Billboard, Html, Line, Text } from "@react-three/drei";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { type ThreeEvent } from "@react-three/fiber";
 import {
   CircleGeometry,
@@ -21,10 +22,12 @@ const INK = "#1a1a1a";
 const FLOOR_Y = 0.5;
 const NODE_RADIUS = 0.55;
 const NODE_HIT_RADIUS = 0.95;
+const LISTENER_NODE_RADIUS = 0.36;
 
 const NODE_DISC_GEOMETRY = new CircleGeometry(NODE_RADIUS - 0.04, 64);
 const NODE_HIT_GEOMETRY = new CircleGeometry(NODE_HIT_RADIUS, 40);
 const HALO_GEOMETRY = new RingGeometry(0.78, 0.92, 64);
+const LISTENER_DISC_GEOMETRY = new CircleGeometry(LISTENER_NODE_RADIUS - 0.04, 64);
 
 const floorPlane = new Plane(new Vector3(0, 1, 0), -FLOOR_Y);
 const tempPoint = new Vector3();
@@ -56,13 +59,19 @@ function ringPoints(
 type TrackNodesProps = {
   tracks: Track[];
   onTrackDragCommit: (trackId: string, position: [number, number, number]) => void;
+  onListenerDragCommit: (position: [number, number, number]) => void;
+  listenerPosition: [number, number, number];
   onListenerRef: (object: Object3D | null) => void;
   onTrackRef: (trackId: string, object: Object3D | null) => void;
   roomScale: [number, number, number];
   onDraggingTrackChange?: (trackId: string | null) => void;
 };
 
-function ListenerHeadphones() {
+function ListenerHeadphones({
+  onPointerDown,
+}: {
+  onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
   return (
     <Billboard>
       <Html
@@ -70,15 +79,28 @@ function ListenerHeadphones() {
         position={[0, 0.02, 0]}
         sprite
         distanceFactor={7}
-        style={{ pointerEvents: "none" }}
+        style={{ pointerEvents: "auto" }}
       >
-        <img
-          src="/headphones.svg"
-          alt=""
-          width={26}
-          height={25}
-          style={{ display: "block" }}
-        />
+        <div
+          onPointerDown={onPointerDown}
+          style={{
+            display: "block",
+            cursor: "grab",
+            userSelect: "none",
+            WebkitUserSelect: "none",
+            MozUserSelect: "none",
+            msUserSelect: "none",
+          }}
+        >
+          <img
+            src="/headphones.svg"
+            alt=""
+            width={26}
+            height={25}
+            style={{ display: "block", pointerEvents: "none" }}
+            draggable={false}
+          />
+        </div>
       </Html>
     </Billboard>
   );
@@ -263,15 +285,24 @@ function TrackNode({
 export function TrackNodes({
   tracks,
   onTrackDragCommit,
+  onListenerDragCommit,
+  listenerPosition,
   onListenerRef,
   onTrackRef,
   roomScale,
   onDraggingTrackChange,
 }: TrackNodesProps) {
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
+  const [draggingListener, setDraggingListener] = useState(false);
   const trackGroups = useRef<Map<string, Group>>(new Map());
   const draggingTrackIdRef = useRef<string | null>(null);
-  const listenerPos = useMemo(() => new Vector3(0, FLOOR_Y, 0), []);
+  const draggingListenerRef = useRef(false);
+  const listenerGroupRef = useRef<Group | null>(null);
+  const listenerCircleSmallPoints = useMemo(() => ringPoints(LISTENER_NODE_RADIUS, 80), []);
+  const listenerPos = useMemo(
+    () => new Vector3(listenerPosition[0], listenerPosition[1], listenerPosition[2]),
+    [listenerPosition]
+  );
 
   const updateDragFromEvent = (
     event: ThreeEvent<PointerEvent>,
@@ -294,6 +325,50 @@ export function TrackNodes({
     ]);
   };
 
+  const updateListenerDragFromEvent = (event: ThreeEvent<PointerEvent>) => {
+    if (!event.ray.intersectPlane(floorPlane, tempPoint)) return;
+    clampToRoom(tempPoint, roomScale);
+    if (!listenerGroupRef.current) return;
+    listenerGroupRef.current.position.set(tempPoint.x, tempPoint.y, tempPoint.z);
+  };
+
+  const commitListenerDrag = () => {
+    const group = listenerGroupRef.current;
+    if (!group) return;
+    onListenerDragCommit([group.position.x, group.position.y, group.position.z]);
+  };
+
+  const startListenerDrag = () => {
+    setDraggingListener(true);
+    draggingListenerRef.current = true;
+  };
+
+  useEffect(() => {
+    if (!draggingListener) return;
+    const stopDraggingListener = () => {
+      if (!draggingListenerRef.current) return;
+      commitListenerDrag();
+      setDraggingListener(false);
+      draggingListenerRef.current = false;
+    };
+    window.addEventListener("pointerup", stopDraggingListener);
+    window.addEventListener("pointercancel", stopDraggingListener);
+    return () => {
+      window.removeEventListener("pointerup", stopDraggingListener);
+      window.removeEventListener("pointercancel", stopDraggingListener);
+    };
+  }, [draggingListener]);
+
+  useEffect(() => {
+    if (draggingListener) return;
+    if (!listenerGroupRef.current) return;
+    listenerGroupRef.current.position.set(
+      listenerPosition[0],
+      listenerPosition[1],
+      listenerPosition[2]
+    );
+  }, [listenerPosition, draggingListener]);
+
   const dragPlaneWidth = 10 * roomScale[0];
   const dragPlaneDepth = 10 * roomScale[2];
 
@@ -302,14 +377,27 @@ export function TrackNodes({
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, FLOOR_Y + 0.002, 0]}
-        visible={draggingTrackId !== null}
+        visible={draggingTrackId !== null || draggingListener}
         onPointerMove={(event) => {
+          if (draggingListenerRef.current) {
+            event.stopPropagation();
+            updateListenerDragFromEvent(event);
+            return;
+          }
           const trackId = draggingTrackIdRef.current;
           if (!trackId) return;
           event.stopPropagation();
           updateDragFromEvent(event, trackId);
         }}
         onPointerUp={(event) => {
+          if (draggingListenerRef.current) {
+            event.stopPropagation();
+            updateListenerDragFromEvent(event);
+            commitListenerDrag();
+            setDraggingListener(false);
+            draggingListenerRef.current = false;
+            return;
+          }
           const trackId = draggingTrackIdRef.current;
           if (!trackId) return;
           event.stopPropagation();
@@ -320,6 +408,11 @@ export function TrackNodes({
           onDraggingTrackChange?.(null);
         }}
         onPointerOut={(event) => {
+          if (draggingListenerRef.current) {
+            if (event.pointerType !== "touch") return;
+            updateListenerDragFromEvent(event);
+            return;
+          }
           const trackId = draggingTrackIdRef.current;
           if (!trackId) return;
           if (event.pointerType !== "touch") return;
@@ -331,10 +424,106 @@ export function TrackNodes({
       </mesh>
 
       <group
-        ref={(group) => onListenerRef(group ?? null)}
-        position={[0, FLOOR_Y, 0]}
+        ref={(group) => {
+          listenerGroupRef.current = group;
+          onListenerRef(group ?? null);
+        }}
       >
-        <ListenerHeadphones />
+        <Billboard>
+          <mesh
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              const target = event.target as Element & {
+                setPointerCapture?: (id: number) => void;
+              };
+              target.setPointerCapture?.(event.pointerId);
+              startListenerDrag();
+              updateListenerDragFromEvent(event);
+            }}
+            onPointerMove={(event) => {
+              if (!draggingListenerRef.current) return;
+              event.stopPropagation();
+              updateListenerDragFromEvent(event);
+            }}
+            onPointerUp={(event) => {
+              if (!draggingListenerRef.current) return;
+              event.stopPropagation();
+              updateListenerDragFromEvent(event);
+              commitListenerDrag();
+              setDraggingListener(false);
+              draggingListenerRef.current = false;
+              const target = event.target as Element & {
+                releasePointerCapture?: (id: number) => void;
+              };
+              target.releasePointerCapture?.(event.pointerId);
+            }}
+            onPointerOver={(event) => {
+              event.stopPropagation();
+              document.body.style.cursor = "grab";
+            }}
+            onPointerOut={(event) => {
+              event.stopPropagation();
+              document.body.style.cursor = "";
+            }}
+          >
+            <primitive object={LISTENER_DISC_GEOMETRY} attach="geometry" />
+            <meshBasicMaterial color="#ffffff" toneMapped={false} />
+          </mesh>
+          <mesh
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              const target = event.target as Element & {
+                setPointerCapture?: (id: number) => void;
+              };
+              target.setPointerCapture?.(event.pointerId);
+              setDraggingListener(true);
+              draggingListenerRef.current = true;
+              updateListenerDragFromEvent(event);
+            }}
+            onPointerMove={(event) => {
+              if (!draggingListenerRef.current) return;
+              event.stopPropagation();
+              updateListenerDragFromEvent(event);
+            }}
+            onPointerUp={(event) => {
+              if (!draggingListenerRef.current) return;
+              event.stopPropagation();
+              updateListenerDragFromEvent(event);
+              commitListenerDrag();
+              setDraggingListener(false);
+              draggingListenerRef.current = false;
+              const target = event.target as Element & {
+                releasePointerCapture?: (id: number) => void;
+              };
+              target.releasePointerCapture?.(event.pointerId);
+            }}
+            onPointerOver={(event) => {
+              event.stopPropagation();
+              document.body.style.cursor = "grab";
+            }}
+            onPointerOut={(event) => {
+              event.stopPropagation();
+              document.body.style.cursor = "";
+            }}
+          >
+            <primitive object={NODE_HIT_GEOMETRY} attach="geometry" />
+            <meshBasicMaterial
+              color="#ffffff"
+              transparent
+              opacity={0}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+          <Line points={listenerCircleSmallPoints} color={INK} lineWidth={1.8} />
+        </Billboard>
+        <ListenerHeadphones
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            event.preventDefault();
+            startListenerDrag();
+          }}
+        />
       </group>
 
       {tracks.map((track, index) => (

@@ -680,7 +680,24 @@ function getTrackAcousticData(trackId: string): TrackAcousticData | null {
       engineState.roomDimensions.depth * engineState.roomDimensions.depth
   );
 
-  const panNorm = Math.max(-1, Math.min(1, x / Math.max(0.1, roomHalfWidth)));
+  // Compute pan from listener-relative azimuth (not absolute world X),
+  // so dragging the listener updates perceived L/R placement.
+  const toSourceX = x - engineState.listenerPosition.x;
+  const toSourceZ = z - engineState.listenerPosition.z;
+  const toSourceLen = Math.hypot(toSourceX, toSourceZ);
+  const forwardX = engineState.listenerForward.x;
+  const forwardZ = engineState.listenerForward.z;
+  const forwardLen = Math.hypot(forwardX, forwardZ);
+  let panNorm = Math.max(-1, Math.min(1, x / Math.max(0.1, roomHalfWidth)));
+  if (toSourceLen > 1e-6 && forwardLen > 1e-6) {
+    const sourceDirX = toSourceX / toSourceLen;
+    const sourceDirZ = toSourceZ / toSourceLen;
+    const fX = forwardX / forwardLen;
+    const fZ = forwardZ / forwardLen;
+    const rightX = -fZ;
+    const rightZ = fX;
+    panNorm = Math.max(-1, Math.min(1, sourceDirX * rightX + sourceDirZ * rightZ));
+  }
   const panAbs = Math.round(Math.abs(panNorm) * 100);
   const panningText =
     panAbs < 2 ? "C 0%" : panNorm < 0 ? `L ${panAbs}%` : `R ${panAbs}%`;
