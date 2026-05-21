@@ -1,3 +1,5 @@
+import { readAuthReturnTo } from "@/lib/authReturnTo";
+
 /**
  * Resolves the app origin for auth redirects and callbacks.
  * Localhost is always preferred when running locally, regardless of env vars.
@@ -22,10 +24,13 @@ export function getURL(): string {
 }
 
 /**
- * Full URL to return to after OAuth (preserves path, e.g. /project/[id] on localhost).
+ * Full URL to return to after OAuth (preserves path, e.g. /project/[id]).
+ * Prefers a stored preview/share return URL when the user opened login from a shared project.
  */
 export function getOAuthRedirectTo(): string {
   if (typeof window !== "undefined") {
+    const returnTo = readAuthReturnTo();
+    if (returnTo) return returnTo;
     return window.location.href;
   }
   return `${getURL()}/`;

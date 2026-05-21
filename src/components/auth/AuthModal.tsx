@@ -1,14 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { getEmailAuthGuidance } from "@/lib/authEmailFlow";
-import { rememberPasswordLogin } from "@/lib/authIdentityHints";
-import { getOAuthRedirectTo, getURL } from "@/lib/getURL";
+import { getOAuthRedirectTo } from "@/lib/getURL";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthStore } from "./AuthStore";
 import styles from "./AuthModal.module.css";
 
 type AuthStep = "entry" | "login" | "register" | "confirm";
+
+const KNOWN_EMAILS_KEY = "foam_known_auth_emails";
 
 function runViewTransition(update: () => void) {
   const doc = document as Document & {
@@ -23,8 +23,27 @@ function runViewTransition(update: () => void) {
   update();
 }
 
+function readKnownEmails() {
+  if (typeof window === "undefined") return new Set<string>();
+  try {
+    const raw = window.localStorage.getItem(KNOWN_EMAILS_KEY);
+    if (!raw) return new Set<string>();
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(parsed.map((email) => email.trim().toLowerCase()));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function rememberEmail(email: string) {
+  if (typeof window === "undefined") return;
+  const normalized = email.trim().toLowerCase();
+  const next = Array.from(readKnownEmails().add(normalized));
+  window.localStorage.setItem(KNOWN_EMAILS_KEY, JSON.stringify(next));
+}
+
 export function AuthModal() {
-  const { session, isAuthReady, isConfigured } = useAuthStore();
+  const { session, isLoading, isConfigured } = useAuthStore();
   const [step, setStep] = useState<AuthStep>("entry");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -75,12 +94,8 @@ export function AuthModal() {
     }
     setPassword("");
     setConfirmPassword("");
-    const guidance = getEmailAuthGuidance(normalizedEmail);
-    if (guidance.route === "oauth-only") {
-      setError(guidance.message ?? "Use your social sign-in provider for this email.");
-      return;
-    }
-    transitionTo("login");
+    const known = readKnownEmails().has(normalizedEmail);
+    transitionTo(known ? "login" : "register");
   };
 
   const handleLogin = async () => {
@@ -96,14 +111,13 @@ export function AuthModal() {
       });
       if (loginError) {
         if (/invalid login credentials/i.test(loginError.message)) {
-          setError(
-            "Wrong email or password. Try again, use Forgot Password, or create an account below.",
-          );
+          setError("No account found with this email. Create one below.");
+          transitionTo("register");
           return;
         }
         throw loginError;
       }
-      rememberPasswordLogin(normalizedEmail);
+      rememberEmail(normalizedEmail);
     });
   };
 
@@ -121,10 +135,10 @@ export function AuthModal() {
       const { data, error: signUpError } = await supabase.auth.signUp({
         email: normalizedEmail,
         password,
-        options: { emailRedirectTo: getURL() },
+        options: { emailRedirectTo: window.location.origin },
       });
       if (signUpError) throw signUpError;
-      rememberPasswordLogin(normalizedEmail);
+      rememberEmail(normalizedEmail);
       setConfirmMessage(
         data.session
           ? "Your account is ready. You are now signed in."
@@ -142,7 +156,7 @@ export function AuthModal() {
     }
     await withBusy(async () => {
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-        redirectTo: getURL(),
+        redirectTo: getOAuthRedirectTo(),
       });
       if (resetError) throw resetError;
       setConfirmMessage("Password reset link sent. Check your email.");
@@ -153,7 +167,7 @@ export function AuthModal() {
   return (
     <div className={styles.overlay}>
       <section className={styles.card} aria-live="polite">
-        {(!isAuthReady || isBusy) && <span className={styles.spinner} aria-hidden />}
+        {(isLoading || isBusy) && <span className={styles.spinner} aria-hidden />}
         <h2 className={styles.title}>Sign in to continue</h2>
         {!isConfigured ? (
           <p className={styles.notice}>
@@ -170,7 +184,7 @@ export function AuthModal() {
                 type="button"
                 className={styles.button}
                 onClick={() => void handleOAuth("google")}
-                disabled={isBusy || !isAuthReady || !isConfigured}
+                disabled={isBusy || isLoading || !isConfigured}
               >
                 Google
               </button>
@@ -178,7 +192,7 @@ export function AuthModal() {
                 type="button"
                 className={styles.button}
                 onClick={() => void handleOAuth("apple")}
-                disabled={isBusy || !isAuthReady || !isConfigured}
+                disabled={isBusy || isLoading || !isConfigured}
               >
                 Apple
               </button>
@@ -186,7 +200,7 @@ export function AuthModal() {
                 type="button"
                 className={styles.button}
                 onClick={() => void handleOAuth("facebook")}
-                disabled={isBusy || !isAuthReady || !isConfigured}
+                disabled={isBusy || isLoading || !isConfigured}
               >
                 Meta
               </button>
@@ -203,14 +217,14 @@ export function AuthModal() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@company.com"
-                disabled={isBusy || !isAuthReady || !isConfigured}
+                disabled={isBusy || isLoading || !isConfigured}
               />
             </div>
             <button
               type="button"
               className={styles.primary}
               onClick={handleContinueWithEmail}
-              disabled={isBusy || !isAuthReady || !isConfigured}
+              disabled={isBusy || isLoading || !isConfigured}
             >
               Next
             </button>
@@ -231,14 +245,14 @@ export function AuthModal() {
                 autoComplete="current-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                disabled={isBusy || !isAuthReady || !isConfigured}
+                disabled={isBusy || isLoading || !isConfigured}
               />
             </div>
             <button
               type="button"
               className={styles.primary}
               onClick={() => void handleLogin()}
-              disabled={isBusy || !isAuthReady || !isConfigured}
+              disabled={isBusy || isLoading || !isConfigured}
             >
               Login
             </button>
@@ -246,7 +260,7 @@ export function AuthModal() {
               type="button"
               className={styles.ghost}
               onClick={() => void handleForgotPassword()}
-              disabled={isBusy || !isAuthReady || !isConfigured}
+              disabled={isBusy || isLoading || !isConfigured}
             >
               Forgot password?
             </button>
@@ -254,7 +268,7 @@ export function AuthModal() {
               type="button"
               className={styles.ghost}
               onClick={() => transitionTo("register")}
-              disabled={isBusy || !isAuthReady || !isConfigured}
+              disabled={isBusy || isLoading || !isConfigured}
             >
               New here? Create account
             </button>
@@ -275,7 +289,7 @@ export function AuthModal() {
                 autoComplete="new-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                disabled={isBusy || !isAuthReady || !isConfigured}
+                disabled={isBusy || isLoading || !isConfigured}
               />
             </div>
             <div className={styles.field}>
@@ -289,14 +303,14 @@ export function AuthModal() {
                 autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
-                disabled={isBusy || !isAuthReady || !isConfigured}
+                disabled={isBusy || isLoading || !isConfigured}
               />
             </div>
             <button
               type="button"
               className={styles.primary}
               onClick={() => void handleRegister()}
-              disabled={isBusy || !isAuthReady || !isConfigured}
+              disabled={isBusy || isLoading || !isConfigured}
             >
               Register
             </button>
@@ -304,7 +318,7 @@ export function AuthModal() {
               type="button"
               className={styles.ghost}
               onClick={() => transitionTo("login")}
-              disabled={isBusy || !isAuthReady || !isConfigured}
+              disabled={isBusy || isLoading || !isConfigured}
             >
               Already have an account? Log in
             </button>
@@ -320,7 +334,7 @@ export function AuthModal() {
               type="button"
               className={styles.primary}
               onClick={() => transitionTo("login")}
-              disabled={isBusy || !isAuthReady || !isConfigured}
+              disabled={isBusy || isLoading || !isConfigured}
             >
               Back to login
             </button>

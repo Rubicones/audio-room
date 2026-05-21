@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { AcousticObstacle, ObstacleType, Track, TrackConfig, Vec3 } from "./types";
 import type { RoomMaterialPreset } from "./acousticMaterials";
@@ -124,6 +124,31 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
   const [acousticSettings, setAcousticSettings] = useState<AcousticSettings>(
     DEFAULT_ACOUSTIC_SETTINGS
   );
+
+  const replaceProjectState = useCallback(
+    (state: {
+      tracks: Track[];
+      roomScale: RoomScale;
+      obstacles: AcousticObstacle[];
+      acousticSettings: Partial<AcousticSettings>;
+    }) => {
+      setTracks(state.tracks);
+      setRoomScale(state.roomScale);
+      setObstacles(state.obstacles);
+      setAcousticSettings((current) => ({
+        ...current,
+        ...state.acousticSettings,
+      }));
+    },
+    []
+  );
+
+  const resetProjectState = useCallback(() => {
+    setTracks([]);
+    setRoomScale(DEFAULT_ROOM_SCALE);
+    setObstacles([createDefaultObstacle(0)]);
+    setAcousticSettings(DEFAULT_ACOUSTIC_SETTINGS);
+  }, []);
 
   const value = useMemo<TrackStoreValue>(
     () => ({
@@ -289,23 +314,10 @@ export function TrackStoreProvider({ children }: { children: ReactNode }) {
           })
         );
       },
-      replaceProjectState: (state) => {
-        setTracks(state.tracks);
-        setRoomScale(state.roomScale);
-        setObstacles(state.obstacles);
-        setAcousticSettings((current) => ({
-          ...current,
-          ...state.acousticSettings,
-        }));
-      },
-      resetProjectState: () => {
-        setTracks([]);
-        setRoomScale(DEFAULT_ROOM_SCALE);
-        setObstacles([createDefaultObstacle(0)]);
-        setAcousticSettings(DEFAULT_ACOUSTIC_SETTINGS);
-      },
+      replaceProjectState,
+      resetProjectState,
     }),
-    [tracks, roomScale, obstacles, acousticSettings]
+    [tracks, roomScale, obstacles, acousticSettings, replaceProjectState, resetProjectState]
   );
 
   return <TrackStoreContext.Provider value={value}>{children}</TrackStoreContext.Provider>;

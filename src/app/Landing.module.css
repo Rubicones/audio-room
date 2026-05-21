@@ -2,7 +2,6 @@
   position: absolute;
   inset: 0;
   z-index: 80;
-  pointer-events: auto;
   background-color: var(--paper, #ffffff);
   background-image: radial-gradient(
     circle at center,
@@ -26,7 +25,6 @@
   flex-direction: column;
   gap: 18px;
   position: relative;
-  pointer-events: auto;
 }
 
 .logo {
@@ -54,13 +52,6 @@
 .authBody {
   display: grid;
   gap: 10px;
-  pointer-events: auto;
-}
-
-.authBody button,
-.authBody input,
-.authBody form {
-  pointer-events: auto;
 }
 
 .oauthGrid {
@@ -97,18 +88,9 @@
   margin-top: 4px;
 }
 
-.oauthBtn[aria-disabled="true"],
-.startClean[aria-disabled="true"],
-.startDemo[aria-disabled="true"],
-.linkBtn[aria-disabled="true"] {
+.oauthBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  pointer-events: none;
-}
-
-.controlBusy {
-  opacity: 0.55;
-  pointer-events: none;
 }
 
 .divider {

@@ -52,9 +52,9 @@ export function ProjectsDashboard({
             project={project}
             isActive={currentProjectId === project.id}
             onOpen={onOpenProject}
+            onCopyLink={onShareProject}
             onRename={onRenameProject}
             onDelete={onDeleteProject}
-            onShare={onShareProject}
           />
         ))}
       </div>

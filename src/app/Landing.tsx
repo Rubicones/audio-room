@@ -1,15 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { debugConsole } from "@/lib/debugConsole";
-import { getNavigationDebugInfo } from "@/lib/debugSession";
-import { registerLandingClickHandlers } from "@/lib/landingClickBridge";
-import { landingStepLog } from "@/lib/landingStepLog";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuthStore } from "@/components/auth/AuthStore";
-import { getEmailAuthGuidance } from "@/lib/authEmailFlow";
-import { rememberPasswordLogin } from "@/lib/authIdentityHints";
-import { getOAuthRedirectTo, getURL } from "@/lib/getURL";
+import { getAuthHint, rememberPasswordLogin } from "@/lib/authIdentityHints";
+import { getOAuthRedirectTo } from "@/lib/getURL";
 import styles from "./Landing.module.css";
 
 type LandingProps = {
@@ -19,37 +15,49 @@ type LandingProps = {
 
 type LandingStep = "entry" | "login" | "register" | "confirm" | "setup";
 
-const PENDING_AUTH_EMAIL_KEY = "foam_pending_auth_email";
+const KNOWN_EMAILS_KEY = "foam_known_auth_emails";
 
-function readPendingAuthEmail() {
-    if (typeof window === "undefined") return "";
-    return window.sessionStorage.getItem(PENDING_AUTH_EMAIL_KEY) ?? "";
+function runViewTransition(update: () => void) {
+    const doc = document as Document & {
+        startViewTransition?: (
+            callback: () => void,
+        ) => { finished?: Promise<void> } | void;
+    };
+    try {
+        if (typeof doc.startViewTransition === "function") {
+            doc.startViewTransition(() => {
+                update();
+            });
+            return;
+        }
+        update();
+    } catch {
+        update();
+    }
 }
 
-function writePendingAuthEmail(email: string) {
+function readKnownEmails() {
+    if (typeof window === "undefined") return new Set<string>();
+    try {
+        const raw = window.localStorage.getItem(KNOWN_EMAILS_KEY);
+        if (!raw) return new Set<string>();
+        const parsed = JSON.parse(raw) as string[];
+        return new Set(parsed.map((email) => email.trim().toLowerCase()));
+    } catch {
+        return new Set<string>();
+    }
+}
+
+function rememberEmail(email: string) {
     if (typeof window === "undefined") return;
-    window.sessionStorage.setItem(PENDING_AUTH_EMAIL_KEY, email);
-}
-
-function clearPendingAuthEmail() {
-    if (typeof window === "undefined") return;
-    window.sessionStorage.removeItem(PENDING_AUTH_EMAIL_KEY);
-}
-
-if (typeof window !== "undefined") {
-    landingStepLog("L01", "Landing.tsx module evaluated (client bundle)");
+    const normalized = email.trim().toLowerCase();
+    const next = Array.from(readKnownEmails().add(normalized));
+    window.localStorage.setItem(KNOWN_EMAILS_KEY, JSON.stringify(next));
 }
 
 export function Landing({ onStartClean, onStartDemo }: LandingProps) {
-    const { session, isConfigured } = useAuthStore();
-    const panelRef = useRef<HTMLElement | null>(null);
-    const emailInputRef = useRef<HTMLInputElement | null>(null);
-    const mountIdRef = useRef(
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-            ? crypto.randomUUID()
-            : "landing-unknown",
-    );
-    const [step, setStep] = useState<LandingStep>("entry");
+    const { session, isLoading, isConfigured } = useAuthStore();
+    const [step, setStep] = useState<LandingStep>(session ? "setup" : "entry");
     const [email, setEmail] = useState("");
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
@@ -58,127 +66,67 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
     const [emailHintMessage, setEmailHintMessage] = useState("");
     const [isBusy, setIsBusy] = useState(false);
     const [confirmMessage, setConfirmMessage] = useState("");
+    const [hydrated, setHydrated] = useState(false);
+    const transitionInFlightRef = useRef(false);
     const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email]);
     const normalizedUsername = useMemo(() => username.trim(), [username]);
-    const displayStep = useMemo((): LandingStep => {
-        if (!session) {
-            return step === "setup" ? "entry" : step;
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setHydrated(true);
+    }, []);
+
+    useEffect(() => {
+        const next = session ? "setup" : "entry";
+        const shouldSyncToSetup = session && step !== "setup";
+        const shouldSyncToEntry = !session && step === "setup";
+        if (!shouldSyncToSetup && !shouldSyncToEntry) return;
+        if (transitionInFlightRef.current) {
+            setStep(next);
+            return;
         }
-        if (step === "confirm") return "confirm";
-        if (step === "entry" || step === "login" || step === "register") {
-            return "setup";
-        }
-        return step;
+        transitionInFlightRef.current = true;
+        runViewTransition(() => {
+            setStep(next);
+        });
+        window.setTimeout(() => {
+            transitionInFlightRef.current = false;
+        }, 350);
     }, [session, step]);
 
-    useEffect(() => {
-        landingStepLog("L05", "Landing displayStep changed", {
-            displayStep,
-            step,
-            hasSession: Boolean(session),
-        });
-    }, [displayStep, step, session]);
-
-    useEffect(() => {
-        landingStepLog("L06", "Landing mount effect start");
-        debugConsole(
-            "Landing.tsx:mount",
-            "Landing mounted — React handlers active",
-            {
-                mountId: mountIdRef.current,
-                nav: getNavigationDebugInfo(),
-                step,
-                hasSession: Boolean(session),
-                isConfigured,
-            },
-            "H6",
-            "post-fix-2",
-        );
-
-        const panel = panelRef.current;
-        landingStepLog("L07", "Landing panel ref after mount", {
-            hasPanel: Boolean(panel),
-        });
-        if (!panel) return;
-
-        const logNativePointer = (event: PointerEvent) => {
-            const target = event.target;
-            const el =
-                target instanceof HTMLElement ? target : null;
-            debugConsole(
-                "Landing.tsx:native-pointer",
-                "Pointer reached auth panel (capture)",
-                {
-                    mountId: mountIdRef.current,
-                    type: event.type,
-                    tag: el?.tagName ?? "unknown",
-                    className: el?.className?.slice?.(0, 80) ?? "",
-                    defaultPrevented: event.defaultPrevented,
-                },
-                "H6",
-                "post-fix-2",
-            );
-        };
-
-        panel.addEventListener("pointerdown", logNativePointer, true);
-        panel.addEventListener("click", logNativePointer, true);
-
-        return () => {
-            panel.removeEventListener("pointerdown", logNativePointer, true);
-            panel.removeEventListener("click", logNativePointer, true);
-            landingStepLog("L08", "Landing unmount");
-            debugConsole(
-                "Landing.tsx:unmount",
-                "Landing unmounted",
-                { mountId: mountIdRef.current, step },
-                "H4",
-                "post-fix-2",
-            );
-        };
-    }, [isConfigured, session, step]);
-
     const transitionTo = (next: LandingStep) => {
-        landingStepLog("L09", "transitionTo", { from: step, to: next });
-        debugConsole(
-            "Landing.tsx:transition",
-            "Step transition",
-            { from: step, to: next, mountId: mountIdRef.current },
-            "H4",
-        );
-        setStep(next);
+        if (transitionInFlightRef.current) {
+            setStep(next);
+            return;
+        }
+        transitionInFlightRef.current = true;
+        runViewTransition(() => {
+            setStep(next);
+        });
+        window.setTimeout(() => {
+            transitionInFlightRef.current = false;
+        }, 350);
     };
 
     const withBusy = async (action: () => Promise<void>) => {
-        landingStepLog("L10", "Landing withBusy start");
         setError("");
         setIsBusy(true);
         try {
             await action();
-            landingStepLog("L11", "Landing withBusy success");
         } catch (cause) {
             const message =
                 cause instanceof Error
                     ? cause.message
                     : "Unexpected authentication error.";
-            landingStepLog("L12", "Landing withBusy error", { message });
             setError(message);
         } finally {
             setIsBusy(false);
-            landingStepLog("L13", "Landing withBusy end");
         }
     };
 
-    const controlsDisabled = isBusy;
-    const busyClass = controlsDisabled ? ` ${styles.controlBusy}` : "";
+    const controlsDisabled = !hydrated || isBusy || !isConfigured;
 
-    const handleOAuth = async (provider: "google" | "twitter") => {
-        landingStepLog("L15", "handleOAuth called", { provider });
-        debugConsole(
-            "Landing.tsx:oauth-click",
-            "OAuth handler invoked",
-            { provider, hasSupabase: Boolean(supabase), isConfigured },
-            "H2",
-        );
+    const handleOAuth = async (provider: "google" | "x") => {
         if (!supabase) return;
         await withBusy(async () => {
             const { error: oauthError } = await supabase.auth.signInWithOAuth({
@@ -189,26 +137,8 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
         });
     };
 
-    const handleContinueWithEmail = (emailFromDom = "") => {
-        const emailToUse = (emailFromDom || email).trim().toLowerCase();
-        landingStepLog("L16", "handleContinueWithEmail called", {
-            emailLength: emailToUse.length,
-            fromDom: Boolean(emailFromDom),
-        });
-        if (emailFromDom && emailFromDom !== email) {
-            setEmail(emailFromDom);
-        }
-        debugConsole(
-            "Landing.tsx:continue-email",
-            "Continue with email handler",
-            {
-                mountId: mountIdRef.current,
-                emailLength: emailToUse.length,
-                step,
-            },
-            "H1",
-        );
-        if (!emailToUse) {
+    const handleContinueWithEmail = () => {
+        if (!normalizedEmail) {
             setError("Please enter an email.");
             return;
         }
@@ -216,18 +146,25 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
         setPassword("");
         setConfirmPassword("");
         setUsername("");
-        const guidance = getEmailAuthGuidance(emailToUse);
-        if (guidance.route === "oauth-only") {
-            setEmailHintMessage(guidance.message ?? "");
+        setEmailHintMessage("");
+        const hint = getAuthHint(normalizedEmail);
+        const providers = new Set(
+            (hint?.providers ?? []).map((provider) => provider.toLowerCase()),
+        );
+        const hasGoogle = providers.has("google");
+        const hasPassword =
+            providers.has("email") || Boolean(hint?.seenPasswordLogin);
+        if (hasGoogle && !hasPassword) {
+            setEmailHintMessage(
+                "This email is linked to Google sign-in. Continue with Google, or use a different email for a new account.",
+            );
             return;
         }
-        setEmailHintMessage(guidance.message ?? "");
-        writePendingAuthEmail(emailToUse);
-        transitionTo("login");
+        const known = readKnownEmails().has(normalizedEmail) || hasPassword;
+        transitionTo(known ? "login" : "register");
     };
 
     const handleLogin = async () => {
-        landingStepLog("L17", "handleLogin called");
         if (!supabase) return;
         if (!password) {
             setError("Please enter your password.");
@@ -241,27 +178,30 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                 });
             if (loginError) {
                 if (/invalid login credentials/i.test(loginError.message)) {
-                    const guidance = getEmailAuthGuidance(normalizedEmail);
-                    if (guidance.route === "oauth-only") {
+                    const hint = getAuthHint(normalizedEmail);
+                    const providers = new Set(
+                        (hint?.providers ?? []).map((provider) =>
+                            provider.toLowerCase(),
+                        ),
+                    );
+                    if (providers.has("google") && !providers.has("email")) {
                         transitionTo("entry");
                         throw new Error(
-                            guidance.message ??
-                                "This email uses a social sign-in provider.",
+                            "This email is linked to Google sign-in. Use Google, or register with a different email.",
                         );
                     }
                     throw new Error(
-                        "Wrong email or password. Try again, use Forgot Password, or create an account below.",
+                        "Wrong password. Please try again or reset your password.",
                     );
                 }
                 throw loginError;
             }
             rememberPasswordLogin(normalizedEmail);
-            clearPendingAuthEmail();
+            rememberEmail(normalizedEmail);
         });
     };
 
     const handleRegister = async () => {
-        landingStepLog("L18", "handleRegister called");
         if (!supabase) return;
         if (!normalizedUsername) {
             setError("Please choose a username.");
@@ -280,7 +220,7 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                 email: normalizedEmail,
                 password,
                 options: {
-                    emailRedirectTo: getURL(),
+                    emailRedirectTo: window.location.origin,
                     data: {
                         username: normalizedUsername,
                     },
@@ -292,12 +232,16 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                         signUpError.message,
                     )
                 ) {
-                    const guidance = getEmailAuthGuidance(normalizedEmail);
-                    if (guidance.route === "oauth-only") {
+                    const hint = getAuthHint(normalizedEmail);
+                    const providers = new Set(
+                        (hint?.providers ?? []).map((provider) =>
+                            provider.toLowerCase(),
+                        ),
+                    );
+                    if (providers.has("google") && !providers.has("email")) {
                         transitionTo("entry");
                         throw new Error(
-                            guidance.message ??
-                                "This email already uses a social sign-in provider.",
+                            "This email already exists via Google sign-in. Log in with Google, or use another email.",
                         );
                     }
                     transitionTo("login");
@@ -308,7 +252,7 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                 throw signUpError;
             }
             rememberPasswordLogin(normalizedEmail);
-            clearPendingAuthEmail();
+            rememberEmail(normalizedEmail);
             setConfirmMessage(
                 data.session
                     ? "Account ready. You are now signed in."
@@ -319,7 +263,6 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
     };
 
     const handleForgotPassword = async () => {
-        landingStepLog("L19", "handleForgotPassword called");
         if (!supabase) return;
         if (!normalizedEmail) {
             setError("Please enter your email first.");
@@ -328,7 +271,7 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
         await withBusy(async () => {
             const { error: resetError } =
                 await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-                    redirectTo: getURL(),
+                    redirectTo: getOAuthRedirectTo(),
                 });
             if (resetError) throw resetError;
             setConfirmMessage("Password reset email sent.");
@@ -336,33 +279,22 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
         });
     };
 
-    useEffect(() => {
-        registerLandingClickHandlers({
-            handleOAuth,
-            isBusy: () => isBusy,
-        });
-    });
-
-    useEffect(() => {
-        const firstButton = panelRef.current?.querySelector("button");
-        const firstInput = panelRef.current?.querySelector("input");
-        landingStepLog("L21", "DOM controls probe", {
-            buttonDisabled: firstButton?.hasAttribute("disabled") ?? null,
-            inputDisabled: firstInput?.hasAttribute("disabled") ?? null,
-            controlsDisabled,
-        });
-    }, [controlsDisabled, displayStep]);
-
     return (
-        <div className={styles.overlay} data-foam-auth-root>
-            <section ref={panelRef} className={styles.panel}>
-                {isBusy ? (
+        <div className={styles.overlay}>
+            <section
+                className={styles.panel}
+                style={{ viewTransitionName: "auth-card" }}
+            >
+                {isBusy || isLoading ? (
                     <span className={styles.spinner} aria-hidden />
                 ) : null}
-                <h1 className={styles.logo}>
+                <h1
+                    className={styles.logo}
+                    style={{ viewTransitionName: "auth-title" }}
+                >
                     foam
                 </h1>
-                {displayStep !== "setup" ? (
+                {step !== "setup" ? (
                     <p className={styles.description}>
                         Sign in to your workspace and continue building spatial
                         audio scenes.
@@ -383,24 +315,20 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                     </p>
                 ) : null}
 
-                {displayStep === "entry" ? (
+                {step === "entry" ? (
                     <div className={styles.authBody}>
                         <p className={styles.dividerText}>login via these services</p>
 
                         <div className={styles.oauthGrid}>
                             <button
                                 type='button'
-                                className={`${styles.oauthBtn}${busyClass}`}
+                                className={styles.oauthBtn}
                                 aria-label='Continue with Google'
-                                data-foam-action='oauth-google'
-                                aria-disabled={controlsDisabled}
-                                onClick={() => {
-                                    landingStepLog("L15", "google onClick");
-                                    void handleOAuth("google");
-                                }}
+                                disabled={controlsDisabled}
+                                onClick={() => void handleOAuth("google")}
                             >
                                 <span className={styles.oauthBtnContent}>
-                                    <img
+                                    <Image
                                         src='/google_logo.svg'
                                         alt=''
                                         width={24}
@@ -413,18 +341,14 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                             </button>
                             <button
                                 type='button'
-                                className={`${styles.oauthBtn}${busyClass}`}
+                                className={styles.oauthBtn}
                                 aria-label='Continue with X'
-                                data-foam-action='oauth-twitter'
-                                aria-disabled={controlsDisabled}
-                                onClick={() => {
-                                    landingStepLog("L15", "x onClick");
-                                    void handleOAuth("twitter");
-                                }}
+                                disabled={controlsDisabled}
+                                onClick={() => void handleOAuth("x")}
                             >
                                 <span className={styles.oauthBtnContent}>
-                                    <img
-                                        src='/X_logo.svg'
+                                    <Image
+                                        src='/X_logo.webp'
                                         alt=''
                                         width={24}
                                         height={24}
@@ -441,47 +365,41 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                             className={styles.form}
                             onSubmit={(event) => {
                                 event.preventDefault();
-                                const fromRef =
-                                    emailInputRef.current?.value ?? "";
-                                const fromForm = String(fromRef).trim();
-                                landingStepLog("L-form", "email form submit", {
-                                    emailLength: fromForm.length,
-                                });
-                                handleContinueWithEmail(fromForm);
+                                handleContinueWithEmail();
                             }}
                         >
                             <input
-                                ref={emailInputRef}
                                 className={styles.input}
-                                name='email'
                                 type='email'
                                 autoComplete='username email'
-                                defaultValue={email}
-                                onInput={(event) => {
-                                    setEmail(event.currentTarget.value);
+                                value={email}
+                                onChange={(event) => {
+                                    setEmail(event.target.value);
                                     setEmailHintMessage("");
                                 }}
                                 placeholder='you@company.com'
-                                readOnly={controlsDisabled}
-                                required
+                                disabled={controlsDisabled}
                             />
                             <button
-                                className={`${styles.startClean}${busyClass}`}
+                                className={styles.startClean}
+                                style={{
+                                    viewTransitionName: "auth-submit-btn",
+                                }}
                                 type='submit'
-                                aria-disabled={controlsDisabled}
+                                disabled={controlsDisabled}
                             >
                                 Next
                             </button>
                         </form>
                         {emailHintMessage ? (
-                            <p className={styles.inlineError} role="status">
+                            <p className={styles.inlineError}>
                                 {emailHintMessage}
                             </p>
                         ) : null}
                     </div>
                 ) : null}
 
-                {displayStep === "login" ? (
+                {step === "login" ? (
                     <form
                         className={styles.form}
                         onSubmit={(event) => {
@@ -499,38 +417,28 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                                 setPassword(event.target.value)
                             }
                             placeholder='password'
-                            readOnly={controlsDisabled}
+                            disabled={controlsDisabled}
                         />
                         <button
-                            className={`${styles.startClean}${busyClass}`}
+                            className={styles.startClean}
+                            style={{ viewTransitionName: "auth-submit-btn" }}
                             type='submit'
-                            data-foam-action='login-submit'
-                            aria-disabled={controlsDisabled}
+                            disabled={controlsDisabled}
                         >
                             Sign In
                         </button>
                         <button
                             type='button'
-                            className={`${styles.linkBtn}${busyClass}`}
-                            data-foam-action='forgot-password'
+                            className={styles.linkBtn}
                             onClick={() => void handleForgotPassword()}
-                            aria-disabled={controlsDisabled}
+                            disabled={controlsDisabled}
                         >
                             Forgot Password?
-                        </button>
-                        <button
-                            type='button'
-                            className={`${styles.linkBtn}${busyClass}`}
-                            data-foam-action='to-register'
-                            onClick={() => transitionTo("register")}
-                            aria-disabled={controlsDisabled}
-                        >
-                            New here? Create an account
                         </button>
                     </form>
                 ) : null}
 
-                {displayStep === "register" ? (
+                {step === "register" ? (
                     <form
                         className={styles.form}
                         onSubmit={(event) => {
@@ -548,7 +456,7 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                                 setUsername(event.target.value)
                             }
                             placeholder='username'
-                            readOnly={controlsDisabled}
+                            disabled={controlsDisabled}
                         />
                         <input
                             className={styles.input}
@@ -559,7 +467,7 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                                 setPassword(event.target.value)
                             }
                             placeholder='password'
-                            readOnly={controlsDisabled}
+                            disabled={controlsDisabled}
                         />
                         <input
                             className={styles.input}
@@ -570,45 +478,43 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                                 setConfirmPassword(event.target.value)
                             }
                             placeholder='confirm password'
-                            readOnly={controlsDisabled}
+                            disabled={controlsDisabled}
                         />
                         <button
-                            className={`${styles.startClean}${busyClass}`}
+                            className={styles.startClean}
+                            style={{ viewTransitionName: "auth-submit-btn" }}
                             type='submit'
-                            data-foam-action='register-submit'
-                            aria-disabled={controlsDisabled}
+                            disabled={controlsDisabled}
                         >
                             Create Account
                         </button>
                         <button
                             type='button'
-                            className={`${styles.linkBtn}${busyClass}`}
-                            data-foam-action='to-login'
+                            className={styles.linkBtn}
                             onClick={() => transitionTo("login")}
-                            aria-disabled={controlsDisabled}
+                            disabled={controlsDisabled}
                         >
-                            Already have an account? Sign in
+                            Already have an account? Log in
                         </button>
                     </form>
                 ) : null}
 
-                {displayStep === "confirm" ? (
+                {step === "confirm" ? (
                     <div className={styles.noticeBlock}>
                         {confirmMessage ||
                             "Check your email for confirmation link"}
                         <button
                             type='button'
-                            className={`${styles.startDemo}${busyClass}`}
-                            data-foam-action='to-login-from-confirm'
+                            className={styles.startDemo}
                             onClick={() => transitionTo("login")}
-                            aria-disabled={controlsDisabled}
+                            disabled={controlsDisabled}
                         >
                             Back to sign in
                         </button>
                     </div>
                 ) : null}
 
-                {displayStep === "setup" ? (
+                {step === "setup" ? (
                     <div className={styles.actions}>
                         <button
                             type='button'

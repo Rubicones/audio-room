@@ -1,18 +1,15 @@
 "use client";
 
-import "@/lib/landingClickBridge";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { getAuthDebugState, subscribeAuthBootstrap } from "@/lib/authBootstrap";
-import { debugConsole } from "@/lib/debugConsole";
-import { bootLog } from "@/lib/bootDebug";
-import { isSupabaseConfigured } from "@/lib/supabaseClient";
+import { isSupabaseConfigured, supabase } from "@/lib/supabaseClient";
+import { rememberAuthProviders } from "@/lib/authIdentityHints";
 
 type AuthStoreValue = {
   user: User | null;
   session: Session | null;
-  isAuthReady: boolean;
+  isLoading: boolean;
   isConfigured: boolean;
 };
 
@@ -21,44 +18,60 @@ const AuthStoreContext = createContext<AuthStoreValue | null>(null);
 export function AuthStoreProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [isAuthReady, setIsAuthReady] = useState(isSupabaseConfigured ? false : true);
+  const [loadingState, setLoadingState] = useState(true);
+  const isLoading = isSupabaseConfigured ? loadingState : false;
 
   useEffect(() => {
-    bootLog("auth:AuthStore-mount");
-    debugConsole("AuthStore.tsx:mount", "AuthStore subscribed", {}, "H8", "post-fix-2");
-    return subscribeAuthBootstrap((snapshot) => {
-      bootLog(
-        "auth:AuthStore-snapshot",
-        JSON.stringify({
-          isReady: snapshot.isReady,
-          hasSession: Boolean(snapshot.session),
-          debug: getAuthDebugState(),
-        }),
-      );
-      setSession(snapshot.session);
-      setUser(snapshot.user);
-      setIsAuthReady(snapshot.isReady);
-      debugConsole(
-        "AuthStore.tsx:snapshot",
-        "Auth state updated",
-        {
-          isReady: snapshot.isReady,
-          hasSession: Boolean(snapshot.session),
-        },
-        "H8",
-        "post-fix-2",
-      );
+    if (!supabase || !isSupabaseConfigured) return;
+
+    let active = true;
+
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        console.warn("Supabase session bootstrap failed:", error.message);
+      }
+      if (data.session?.user?.email) {
+        const providerList = Array.isArray(data.session.user.app_metadata?.providers)
+          ? (data.session.user.app_metadata.providers as string[])
+          : data.session.user.app_metadata?.provider
+            ? [String(data.session.user.app_metadata.provider)]
+            : [];
+        rememberAuthProviders(data.session.user.email, providerList);
+      }
+      setSession(data.session ?? null);
+      setUser(data.session?.user ?? null);
+      setLoadingState(false);
     });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (nextSession?.user?.email) {
+        const providerList = Array.isArray(nextSession.user.app_metadata?.providers)
+          ? (nextSession.user.app_metadata.providers as string[])
+          : nextSession.user.app_metadata?.provider
+            ? [String(nextSession.user.app_metadata.provider)]
+            : [];
+        rememberAuthProviders(nextSession.user.email, providerList);
+      }
+      setSession(nextSession ?? null);
+      setUser(nextSession?.user ?? null);
+      setLoadingState(false);
+    });
+
+    return () => {
+      active = false;
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   const value = useMemo<AuthStoreValue>(
     () => ({
       user,
       session,
-      isAuthReady,
+      isLoading,
       isConfigured: isSupabaseConfigured,
     }),
-    [user, session, isAuthReady],
+    [user, session, isLoading]
   );
 
   return <AuthStoreContext.Provider value={value}>{children}</AuthStoreContext.Provider>;
