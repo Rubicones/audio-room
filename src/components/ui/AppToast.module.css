@@ -1,0 +1,56 @@
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--ink, #1a1a1a);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.35;
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.08);
+  pointer-events: auto;
+}
+
+.iconCircle {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #ffffff;
+}
+
+.iconCircleSuccess {
+  background: #5bc489;
+}
+
+.iconCircleError {
+  background: #e16a6a;
+}
+
+.iconCircleInfo {
+  background: #4a90e2;
+}
+
+.iconCircleWarning {
+  background: #e5b94a;
+}
+
+.message {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-transform: lowercase;
+}
+
+.iconSvg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}

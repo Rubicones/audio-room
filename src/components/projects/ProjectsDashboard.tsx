@@ -11,6 +11,7 @@ type ProjectsDashboardProps = {
   onOpenProject: (projectId: string) => void;
   onRenameProject: (projectId: string, nextTitle: string) => Promise<void>;
   onDeleteProject: (projectId: string) => Promise<void>;
+  onShareProject: (projectId: string) => void;
   onStartClean: () => void;
   onLoadDemo: () => void;
 };
@@ -22,6 +23,7 @@ export function ProjectsDashboard({
   onOpenProject,
   onRenameProject,
   onDeleteProject,
+  onShareProject,
   onStartClean,
   onLoadDemo,
 }: ProjectsDashboardProps) {
@@ -52,6 +54,7 @@ export function ProjectsDashboard({
             onOpen={onOpenProject}
             onRename={onRenameProject}
             onDelete={onDeleteProject}
+            onShare={onShareProject}
           />
         ))}
       </div>

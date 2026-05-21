@@ -11,6 +11,7 @@ type ProjectCardProps = {
   onOpen: (projectId: string) => void;
   onRename: (projectId: string, nextTitle: string) => Promise<void>;
   onDelete: (projectId: string) => Promise<void>;
+  onShare: (projectId: string) => void;
 };
 
 function toRelativeTime(value: string) {
@@ -40,6 +41,7 @@ export function ProjectCard({
   onOpen,
   onRename,
   onDelete,
+  onShare,
 }: ProjectCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -111,6 +113,10 @@ export function ProjectCard({
             onRename={() => {
               setMenuOpen(false);
               setIsRenaming(true);
+            }}
+            onShare={() => {
+              setMenuOpen(false);
+              onShare(project.id);
             }}
             onDelete={() => {
               setMenuOpen(false);

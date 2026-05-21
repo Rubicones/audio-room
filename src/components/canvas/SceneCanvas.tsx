@@ -29,6 +29,7 @@ type SceneContentsProps = {
   listenerPosition: [number, number, number];
   onListenerPositionChange: (position: [number, number, number]) => void;
   onActiveObstacleChange?: (obstacleId: string | null) => void;
+  isReadOnly?: boolean;
 };
 
 type SceneCanvasProps = {
@@ -37,6 +38,7 @@ type SceneCanvasProps = {
   listenerPosition: [number, number, number];
   onListenerPositionChange: (position: [number, number, number]) => void;
   onActiveObstacleChange?: (obstacleId: string | null) => void;
+  isReadOnly?: boolean;
 };
 
 type TrackLite = {
@@ -69,6 +71,7 @@ function SceneContents({
   listenerPosition,
   onListenerPositionChange,
   onActiveObstacleChange,
+  isReadOnly = false,
 }: SceneContentsProps) {
   const {
     tracks,
@@ -264,6 +267,7 @@ function SceneContents({
               roomScale={roomScale}
               onPositionChange={(position) => updateObstacle(obstacle.id, { position })}
               onSelect={onActiveObstacleChange}
+              isReadOnly={isReadOnly}
             />
           ))
         : null}
@@ -279,6 +283,7 @@ function SceneContents({
         }}
         onTrackRef={handleTrackRef}
         onDraggingTrackChange={setDraggingTrackId}
+        isReadOnly={isReadOnly}
       />
 
       <AcousticEducationViz
@@ -314,6 +319,7 @@ export function SceneCanvas({
   listenerPosition,
   onListenerPositionChange,
   onActiveObstacleChange,
+  isReadOnly = false,
 }: SceneCanvasProps) {
   return (
     <Canvas
@@ -335,6 +341,7 @@ export function SceneCanvas({
         listenerPosition={listenerPosition}
         onListenerPositionChange={onListenerPositionChange}
         onActiveObstacleChange={onActiveObstacleChange}
+        isReadOnly={isReadOnly}
       />
     </Canvas>
   );

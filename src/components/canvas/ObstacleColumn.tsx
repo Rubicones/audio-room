@@ -18,6 +18,7 @@ type ObstacleColumnProps = {
   roomScale: [number, number, number];
   onPositionChange: (position: Vec3) => void;
   onSelect?: (obstacleId: string | null) => void;
+  isReadOnly?: boolean;
 };
 
 /**
@@ -28,6 +29,7 @@ export function ObstacleColumn({
   roomScale,
   onPositionChange,
   onSelect,
+  isReadOnly = false,
 }: ObstacleColumnProps) {
   const [dragging, setDragging] = useState(false);
   const draggingRef = useRef(false);
@@ -75,6 +77,7 @@ export function ObstacleColumn({
   };
 
   const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
+    if (isReadOnly) return;
     event.stopPropagation();
     onSelect?.(obstacle.id);
     const target = event.target as Element & {
@@ -87,6 +90,7 @@ export function ObstacleColumn({
   };
 
   const handlePointerMove = (event: ThreeEvent<PointerEvent>) => {
+    if (isReadOnly) return;
     if (!draggingRef.current) return;
     event.stopPropagation();
     onSelect?.(obstacle.id);
@@ -94,6 +98,7 @@ export function ObstacleColumn({
   };
 
   const handlePointerUp = (event: ThreeEvent<PointerEvent>) => {
+    if (isReadOnly) return;
     if (!draggingRef.current) return;
     event.stopPropagation();
     updateDragFromEvent(event);

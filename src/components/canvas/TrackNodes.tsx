@@ -65,6 +65,7 @@ type TrackNodesProps = {
   onTrackRef: (trackId: string, object: Object3D | null) => void;
   roomScale: [number, number, number];
   onDraggingTrackChange?: (trackId: string | null) => void;
+  isReadOnly?: boolean;
 };
 
 function ListenerHeadphones({
@@ -291,6 +292,7 @@ export function TrackNodes({
   onTrackRef,
   roomScale,
   onDraggingTrackChange,
+  isReadOnly = false,
 }: TrackNodesProps) {
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
   const [draggingListener, setDraggingListener] = useState(false);
@@ -432,6 +434,7 @@ export function TrackNodes({
         <Billboard>
           <mesh
             onPointerDown={(event) => {
+              if (isReadOnly) return;
               event.stopPropagation();
               const target = event.target as Element & {
                 setPointerCapture?: (id: number) => void;
@@ -441,11 +444,13 @@ export function TrackNodes({
               updateListenerDragFromEvent(event);
             }}
             onPointerMove={(event) => {
+              if (isReadOnly) return;
               if (!draggingListenerRef.current) return;
               event.stopPropagation();
               updateListenerDragFromEvent(event);
             }}
             onPointerUp={(event) => {
+              if (isReadOnly) return;
               if (!draggingListenerRef.current) return;
               event.stopPropagation();
               updateListenerDragFromEvent(event);
@@ -459,7 +464,7 @@ export function TrackNodes({
             }}
             onPointerOver={(event) => {
               event.stopPropagation();
-              document.body.style.cursor = "grab";
+              document.body.style.cursor = isReadOnly ? "" : "grab";
             }}
             onPointerOut={(event) => {
               event.stopPropagation();
@@ -471,6 +476,7 @@ export function TrackNodes({
           </mesh>
           <mesh
             onPointerDown={(event) => {
+              if (isReadOnly) return;
               event.stopPropagation();
               const target = event.target as Element & {
                 setPointerCapture?: (id: number) => void;
@@ -481,11 +487,13 @@ export function TrackNodes({
               updateListenerDragFromEvent(event);
             }}
             onPointerMove={(event) => {
+              if (isReadOnly) return;
               if (!draggingListenerRef.current) return;
               event.stopPropagation();
               updateListenerDragFromEvent(event);
             }}
             onPointerUp={(event) => {
+              if (isReadOnly) return;
               if (!draggingListenerRef.current) return;
               event.stopPropagation();
               updateListenerDragFromEvent(event);
@@ -499,7 +507,7 @@ export function TrackNodes({
             }}
             onPointerOver={(event) => {
               event.stopPropagation();
-              document.body.style.cursor = "grab";
+              document.body.style.cursor = isReadOnly ? "" : "grab";
             }}
             onPointerOut={(event) => {
               event.stopPropagation();
@@ -519,6 +527,7 @@ export function TrackNodes({
         </Billboard>
         <ListenerHeadphones
           onPointerDown={(event) => {
+            if (isReadOnly) return;
             event.stopPropagation();
             event.preventDefault();
             startListenerDrag();
@@ -542,6 +551,7 @@ export function TrackNodes({
             }
           }}
           onPointerDown={(event) => {
+            if (isReadOnly) return;
             event.stopPropagation();
             const target = event.target as Element & {
               setPointerCapture?: (id: number) => void;
@@ -553,11 +563,13 @@ export function TrackNodes({
             updateDragFromEvent(event, track.id);
           }}
           onPointerMove={(event) => {
+            if (isReadOnly) return;
             if (draggingTrackIdRef.current !== track.id) return;
             event.stopPropagation();
             updateDragFromEvent(event, track.id);
           }}
           onPointerUp={(event) => {
+            if (isReadOnly) return;
             if (draggingTrackIdRef.current !== track.id) return;
             event.stopPropagation();
             updateDragFromEvent(event, track.id);

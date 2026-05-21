@@ -54,8 +54,11 @@ export function rememberPasswordLogin(email: string) {
   if (!key) return;
   const all = readRaw();
   const prev = all[key] ?? { providers: [] };
+  const providers = new Set(prev.providers.map((provider) => provider.toLowerCase()));
+  providers.add("email");
   all[key] = {
     ...prev,
+    providers: Array.from(providers),
     seenPasswordLogin: true,
   };
   writeRaw(all);

@@ -65,6 +65,19 @@
   pointer-events: auto;
 }
 
+.shareProjectBtn {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--ink, #1a1a1a);
+  font-family: inherit;
+  font-size: 14px;
+  text-transform: lowercase;
+  cursor: pointer;
+}
+
 .syncStatus {
   font-size: 12px;
   color: rgba(26, 26, 26, 0.65);
@@ -78,6 +91,76 @@
 
 .syncStatusError {
   color: #a12020;
+}
+
+.readOnlyControls {
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.previewPlayable {
+  pointer-events: auto;
+}
+
+.previewDock {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 22;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 26px rgba(10, 10, 10, 0.08);
+}
+
+.previewBadge {
+  font-family: inherit;
+  font-size: 14px;
+  color: rgba(26, 26, 26, 0.78);
+  text-transform: lowercase;
+}
+
+.previewLoginGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.previewPrimaryBtn {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  text-transform: lowercase;
+  cursor: pointer;
+  background: var(--ink, #1a1a1a);
+  color: #ffffff;
+}
+
+.previewOAuthBtn {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 8px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.previewOAuthLogoGoogle {
+  filter: saturate(200%);
+  transform: scale(1.08);
 }
 
 .demoProjectIndicator {
@@ -923,6 +1006,93 @@
 .appInitializing p {
   font-size: 13px;
   color: rgba(26, 26, 26, 0.7);
+}
+
+.bootDebugCurrent {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink, #1a1a1a);
+  max-width: min(92vw, 520px);
+}
+
+.bootDebugHint {
+  margin: 8px auto 0;
+  max-width: min(92vw, 520px);
+  font-size: 11px;
+  opacity: 0.6;
+  text-align: center;
+}
+
+.bootDebugMeta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 4px auto 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(26, 26, 26, 0.28);
+  border-radius: 8px;
+  max-width: min(96vw, 640px);
+  text-align: left;
+  font-size: 11px;
+}
+
+.bootDebugMeta > div {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+}
+
+.bootDebugMeta dt {
+  opacity: 0.65;
+  text-transform: lowercase;
+}
+
+.bootDebugMeta dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  word-break: break-all;
+}
+
+.bootDebugLog {
+  list-style: none;
+  margin: 10px auto 0;
+  padding: 0;
+  max-width: min(96vw, 640px);
+  max-height: 320px;
+  overflow: auto;
+  text-align: left;
+  border: 1px solid rgba(26, 26, 26, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.bootDebugLog li {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 6px 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.08);
+  font-size: 11px;
+}
+
+.bootDebugLog li:last-child {
+  border-bottom: none;
+}
+
+.bootDebugTime {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  opacity: 0.55;
+}
+
+.bootDebugStep {
+  font-weight: 600;
+}
+
+.bootDebugDetail {
+  grid-column: 2;
+  opacity: 0.72;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  word-break: break-word;
 }
 
 .spinner {

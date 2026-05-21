@@ -1,5 +1,6 @@
 "use client";
 
+import { bootLog } from "@/lib/bootDebug";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -16,3 +17,10 @@ export const supabase = isSupabaseConfigured
       },
     })
   : null;
+
+if (typeof window !== "undefined") {
+  bootLog(
+    "supabase:client",
+    isSupabaseConfigured ? `url=${supabaseUrl?.slice(0, 32)}…` : "not configured",
+  );
+}
