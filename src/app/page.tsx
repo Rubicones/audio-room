@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { DefaultLoadingManager } from "three";
 import * as Tone from "tone";
+import toast from "react-hot-toast";
 import {
   disposeAudioEngine,
   getTrackAcousticData,
@@ -354,6 +355,7 @@ function MixerPage() {
   const [zoomSteps, setZoomSteps] = useState(0);
   const [isNarrowScreen, setIsNarrowScreen] = useState(false);
   const [summaryTrackId, setSummaryTrackId] = useState<string | null>(null);
+  const [summaryDrawerOpen, setSummaryDrawerOpen] = useState(false);
   const [expandedTrackIds, setExpandedTrackIds] = useState<Record<string, boolean>>({});
   const [liveTrackData, setLiveTrackData] = useState<Record<string, TrackAcousticData>>({});
   const [trackLoadedMap, setTrackLoadedMap] = useState<Record<string, boolean>>({});
@@ -378,6 +380,7 @@ function MixerPage() {
   const saveDebounceRef = useRef<number | null>(null);
   const loadingProjectRef = useRef(false);
   const creatingProjectRef = useRef(false);
+  const profileWrapRef = useRef<HTMLDivElement | null>(null);
   const workspaceActive = appPhase === "workspace";
   const replaceUrlWithProjectId = useCallback((projectId: string) => {
     if (typeof window === "undefined") return;
@@ -500,7 +503,7 @@ function MixerPage() {
 
   const performProjectSave = useCallback(
     async (overrideConfig?: ProjectConfigJSON) => {
-      if (!supabase || !currentProjectId || isDemoScene || isHydrating) return;
+      if (!supabase || !currentProjectId || isDemoScene || isHydrating) return false;
       setSaveState("saving");
       const { error } = await supabase
         .from("projects")
@@ -508,11 +511,66 @@ function MixerPage() {
         .eq("id", currentProjectId);
       if (error) {
         setSaveState("error");
-        return;
+        setProfileError(error.message);
+        toast.error(error.message);
+        return false;
       }
       setSaveState("saved");
+      return true;
     },
     [currentProjectId, isDemoScene, isHydrating, persistedProjectConfig]
+  );
+
+  const ensurePersistedProject = useCallback(
+    async (preferredTitle?: string) => {
+      if (!supabase || !sessionUserId || isDemoScene || isHydrating) return null;
+      if (currentProjectId) return currentProjectId;
+      if (creatingProjectRef.current) return null;
+      creatingProjectRef.current = true;
+      const fallbackTitle =
+        preferredTitle?.trim() ||
+        currentProjectTitle.trim() ||
+        persistedProjectConfig.tracks[0]?.name?.trim() ||
+        tracks[0]?.name?.trim() ||
+        "Untitled project";
+      try {
+        const { data, error } = await supabase
+          .from("projects")
+          .insert({
+            user_id: sessionUserId,
+            title: fallbackTitle,
+            config: persistedProjectConfig,
+          })
+          .select("id,title,config,updated_at")
+          .single();
+        if (error || !data) {
+          const message = error?.message ?? "Could not create project";
+          setProfileError(message);
+          toast.error(message);
+          return null;
+        }
+        setCurrentProjectId(data.id);
+        setCurrentProjectTitle(data.title || fallbackTitle);
+        setIsDemoScene(false);
+        replaceUrlWithProjectId(data.id);
+        setSaveState("saved");
+        void refreshProjects();
+        return data.id;
+      } finally {
+        creatingProjectRef.current = false;
+      }
+    },
+    [
+      currentProjectId,
+      currentProjectTitle,
+      isDemoScene,
+      isHydrating,
+      persistedProjectConfig,
+      refreshProjects,
+      replaceUrlWithProjectId,
+      sessionUserId,
+      tracks,
+    ]
   );
 
   useEffect(() => () => disposeAudioEngine(), []);
@@ -523,6 +581,19 @@ function MixerPage() {
     window.addEventListener("resize", updateScreen);
     return () => window.removeEventListener("resize", updateScreen);
   }, []);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (profileWrapRef.current?.contains(target)) return;
+      setProfileMenuOpen(false);
+      setChangePasswordOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [profileMenuOpen]);
 
   useEffect(() => {
     let active = true;
@@ -612,37 +683,20 @@ function MixerPage() {
   useEffect(() => {
     if (!supabase || !sessionUserId || currentProjectId || isDemoScene || isHydrating) return;
     if (persistedProjectConfig.tracks.length === 0) return;
-    if (creatingProjectRef.current) return;
-    creatingProjectRef.current = true;
     const firstTrackName =
       persistedProjectConfig.tracks[0]?.name?.trim() ||
       tracks[0]?.name?.trim() ||
       "Untitled project";
-    void (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("projects")
-          .insert({
-            user_id: sessionUserId,
-            title: firstTrackName,
-            config: persistedProjectConfig,
-          })
-          .select("id,title,config,updated_at")
-          .single();
-        if (error || !data) {
-          return;
-        }
-        setCurrentProjectId(data.id);
-        setCurrentProjectTitle(data.title || firstTrackName);
-        setIsDemoScene(false);
-        replaceUrlWithProjectId(data.id);
-        setSaveState("saved");
-        void refreshProjects();
-      } finally {
-        creatingProjectRef.current = false;
-      }
-    })();
-  }, [currentProjectId, isDemoScene, isHydrating, persistedProjectConfig, refreshProjects, replaceUrlWithProjectId, sessionUserId, tracks]);
+    void ensurePersistedProject(firstTrackName);
+  }, [
+    currentProjectId,
+    ensurePersistedProject,
+    isDemoScene,
+    isHydrating,
+    persistedProjectConfig.tracks,
+    sessionUserId,
+    tracks,
+  ]);
 
   useEffect(() => {
     if (!currentProjectId) return;
@@ -715,6 +769,7 @@ function MixerPage() {
   const startApp = async (mode: "clean" | "demo") => {
     await Tone.start();
     resetProjectState();
+    setProfileError("");
     setListenerPosition([0, 0.5, 0]);
     setIsBootReady(false);
     setAppPhase("workspace");
@@ -744,6 +799,7 @@ function MixerPage() {
       setCurrentProjectId(null);
       setIsDemoScene(false);
       setSaveState("idle");
+      setProfileError("");
       resetProjectState();
       setListenerPosition([0, 0.5, 0]);
     });
@@ -798,6 +854,7 @@ function MixerPage() {
     async (projectId: string, nextTitle: string) => {
       if (!supabase) return;
       const normalized = nextTitle.trim() || "Untitled project";
+      setProfileError("");
       setProjects((current) =>
         current.map((project) =>
           project.id === projectId ? { ...project, title: normalized } : project
@@ -812,7 +869,10 @@ function MixerPage() {
         .eq("id", projectId);
       if (error) {
         setProfileError(error.message);
+        toast.error(error.message);
         void refreshProjects();
+      } else {
+        toast.success("Project renamed");
       }
     },
     [currentProjectId, refreshProjects]
@@ -824,8 +884,10 @@ function MixerPage() {
       const { error } = await supabase.from("projects").delete().eq("id", projectId);
       if (error) {
         setProfileError(error.message);
+        toast.error(error.message);
         return;
       }
+      toast.success("Project deleted");
       setProjects((current) => current.filter((project) => project.id !== projectId));
       if (currentProjectId === projectId) {
         setCurrentProjectId(null);
@@ -861,6 +923,7 @@ function MixerPage() {
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Sign out failed";
       setProfileError(message);
+      toast.error(message);
     } finally {
       setProfileBusy(false);
     }
@@ -877,9 +940,11 @@ function MixerPage() {
       if (error) throw error;
       setNewPassword("");
       setChangePasswordOpen(false);
+      toast.success("Password updated");
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Could not change password";
       setProfileError(message);
+      toast.error(message);
     } finally {
       setProfileBusy(false);
     }
@@ -887,16 +952,20 @@ function MixerPage() {
 
   const handleProjectTitleChange = async (title: string) => {
     setCurrentProjectTitle(title);
-    if (!supabase || !currentProjectId || isDemoScene) return;
+    if (!supabase || isDemoScene) return;
+    setProfileError("");
+    const projectId = await ensurePersistedProject(title);
+    if (!projectId) return;
     setProjectTitleBusy(true);
     const nextTitle = title.trim() || "Untitled project";
     const { error } = await supabase
       .from("projects")
       .update({ title: nextTitle, updated_at: new Date().toISOString() })
-      .eq("id", currentProjectId);
+      .eq("id", projectId);
     setProjectTitleBusy(false);
     if (error) {
       setProfileError(error.message);
+      toast.error(error.message);
       return;
     }
     setCurrentProjectTitle(nextTitle);
@@ -904,11 +973,19 @@ function MixerPage() {
   };
 
   const handleForceSaveNow = async () => {
+    if (isDemoScene) return;
+    setProfileError("");
+    const projectId = await ensurePersistedProject(currentProjectTitle);
+    if (!projectId) return;
     if (saveDebounceRef.current) {
       window.clearTimeout(saveDebounceRef.current);
       saveDebounceRef.current = null;
     }
-    await performProjectSave();
+    const saved = await performProjectSave();
+    if (saved) {
+      toast.success("Project saved");
+      void refreshProjects();
+    }
   };
 
   const handleFileAdd = (event: ChangeEvent<HTMLInputElement>) => {
@@ -946,9 +1023,9 @@ function MixerPage() {
     setPendingUploadsCount((current) => current + files.length);
     const newTracks = files.map((file, index) => ({
       id: crypto.randomUUID(),
-      name: file.name.replace(/\.[^/.]+$/, ""),
+        name: file.name.replace(/\.[^/.]+$/, ""),
       color: PALETTE[(tracks.length + index) % PALETTE.length],
-      audioUrl: URL.createObjectURL(file),
+        audioUrl: URL.createObjectURL(file),
     }));
     addTracks(newTracks);
     void (async () => {
@@ -972,8 +1049,8 @@ function MixerPage() {
     if (loadingNow.total > 0 && loadingNow.loaded < loadingNow.total) return;
     setTransportLoading(true);
     try {
-      const playing = await toggleTransport();
-      setIsPlaying(playing);
+    const playing = await toggleTransport();
+    setIsPlaying(playing);
     } finally {
       setTransportLoading(false);
     }
@@ -1099,15 +1176,15 @@ function MixerPage() {
             <span className={styles.rowLabel}>Air absorption</span>
             <HelpTooltip text="Simulates how high frequencies fade faster than lows in large rooms. Turning this on makes distant sources sound darker and more realistic." />
           </span>
-          <button
-            type="button"
+        <button
+          type="button"
             className={`${styles.toggle} ${acousticSettings.enableAirAbsorption ? styles.toggleOn : ""}`}
             onClick={() =>
               setEnableAirAbsorption(!acousticSettings.enableAirAbsorption)
             }
           >
             {acousticSettings.enableAirAbsorption ? "on" : "off"}
-          </button>
+        </button>
         </div>
 
         <div className={styles.row}>
@@ -1137,15 +1214,15 @@ function MixerPage() {
             <span className={styles.rowLabel}>Show attenuation zones</span>
             <HelpTooltip text="Visualizes how sound volume drops over distance. Use this to ensure the back of the club is not too quiet compared to the front." />
           </span>
-          <button
-            type="button"
+        <button
+          type="button"
             className={`${styles.toggle} ${acousticSettings.showAttenuationZones ? styles.toggleOn : ""}`}
             onClick={() =>
               setShowAttenuationZones(!acousticSettings.showAttenuationZones)
             }
           >
             {acousticSettings.showAttenuationZones ? "on" : "off"}
-          </button>
+        </button>
         </div>
 
         <div className={styles.row}>
@@ -1183,8 +1260,8 @@ function MixerPage() {
         <section className={styles.section}>
           <h2 className={styles.heading}>Obstacles</h2>
           <div className={styles.obstacleAddRow}>
-            <button
-              type="button"
+          <button
+            type="button"
               className={styles.columnAddBtn}
               onClick={() => {
                 const id = addObstacle(ROOM_CENTER_POSITION, "cylinder");
@@ -1192,7 +1269,7 @@ function MixerPage() {
               }}
             >
               Add Obstacle
-            </button>
+          </button>
           </div>
           <ul className={styles.columnList}>
             {obstacles.map((obstacle, index) => (
@@ -1213,7 +1290,7 @@ function MixerPage() {
                     style={{ backgroundColor: obstacle.color }}
                   />
                   <span className={styles.columnName}>{`Obstacle ${index + 1}`}</span>
-                </button>
+          </button>
                 <div
                   className={styles.columnColorBadge}
                   style={{ backgroundColor: obstacle.color }}
@@ -1226,7 +1303,7 @@ function MixerPage() {
                     value={obstacle.color}
                     onChange={(e) => updateObstacle(obstacle.id, { color: e.target.value })}
                   />
-                </div>
+        </div>
                 <button
                   type="button"
                   className={styles.columnDeleteBtn}
@@ -1377,13 +1454,13 @@ function MixerPage() {
                   style={{ backgroundColor: track.color }}
                 />
                 <span className={styles.trackIndex}>{idx + 1}</span>
-                <input
+              <input
                   className={styles.trackName}
-                  value={track.name}
+                value={track.name}
                   onChange={(e) => updateTrackName(track.id, e.target.value)}
-                />
-                <button
-                  type="button"
+              />
+              <button
+                type="button"
                   className={styles.summaryBtn}
                   onClick={() => {
                     if (isNarrowScreen) {
@@ -1394,6 +1471,7 @@ function MixerPage() {
                       return;
                     }
                     setSummaryTrackId(track.id);
+                    setSummaryDrawerOpen(true);
                   }}
                   aria-label={`Open settings summary for ${track.name}`}
                   title={isNarrowScreen ? "Details" : "Settings Summary"}
@@ -1403,19 +1481,19 @@ function MixerPage() {
                 <button
                   type="button"
                   className={`${styles.circleBtn} ${track.muted ? styles.circleBtnOn : ""}`}
-                  onClick={() => toggleTrackMute(track.id)}
+                onClick={() => toggleTrackMute(track.id)}
                   title="Mute"
-                >
+              >
                   m
-                </button>
-                <button
-                  type="button"
+              </button>
+              <button
+                type="button"
                   className={`${styles.circleBtn} ${track.solo ? styles.circleBtnOn : ""}`}
-                  onClick={() => toggleTrackSolo(track.id)}
+                onClick={() => toggleTrackSolo(track.id)}
                   title="Solo"
-                >
+              >
                   s
-                </button>
+              </button>
                 {!isDemoScene ? (
                   <button
                     type="button"
@@ -1526,13 +1604,13 @@ function MixerPage() {
           <div className={styles.addColumn}>
             <label className={styles.addBtn}>
               Add track
-              <input
+            <input
                 type="file"
                 accept="audio/*"
                 multiple
                 onChange={handleFileAdd}
-              />
-            </label>
+            />
+          </label>
             <button
               type="button"
               className={styles.demoBtn}
@@ -1557,9 +1635,131 @@ function MixerPage() {
     );
   }
 
+  const syncStatusClassName =
+    saveState === "saved"
+      ? `${styles.syncStatus} ${styles.syncStatusSuccess}`
+      : saveState === "error"
+        ? `${styles.syncStatus} ${styles.syncStatusError}`
+        : styles.syncStatus;
+  const showWorkspaceProjectControls = workspaceActive;
+
+  const workspaceHeader = session ? (
+    <header className={styles.workspaceHeader}>
+      <button
+        type="button"
+        className={styles.workspaceBrand}
+        onClick={showWorkspaceProjectControls ? () => void openProjectsDashboard() : undefined}
+        aria-label="Go to projects dashboard"
+      >
+        foam
+      </button>
+      <div className={styles.profileWrap} ref={profileWrapRef}>
+        {showWorkspaceProjectControls && isDemoScene ? (
+          <span className={styles.demoProjectIndicator}>Demo project</span>
+        ) : null}
+        {showWorkspaceProjectControls && syncStatusText ? (
+          <span className={syncStatusClassName}>
+            {syncStatusText}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          className={styles.profileAvatar}
+          onClick={() => setProfileMenuOpen((value) => !value)}
+          aria-label="Open profile menu"
+        >
+          {user?.user_metadata?.avatar_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={String(user.user_metadata.avatar_url)} alt="" />
+          ) : (
+            <span>{avatarFallbackLetter}</span>
+          )}
+        </button>
+        {profileMenuOpen ? (
+          <div className={styles.profileMenu} style={{ viewTransitionName: "profile-menu" }}>
+            {username ? <p className={styles.profileEmail}>{username}</p> : null}
+            <p className={styles.profileEmail}>{user?.email}</p>
+            {showWorkspaceProjectControls ? (
+              <>
+                <input
+                  type="text"
+                  className={styles.profilePasswordInput}
+                  value={currentProjectTitle}
+                  onChange={(event) => {
+                    void handleProjectTitleChange(event.target.value);
+                  }}
+                  placeholder="project title"
+                  disabled={profileBusy || projectTitleBusy || isDemoScene}
+                />
+                <button
+                  type="button"
+                  className={styles.profileAction}
+                  onClick={() => void handleForceSaveNow()}
+                  disabled={profileBusy || isDemoScene}
+                >
+                  Save Project Now
+                </button>
+                <button
+                  type="button"
+                  className={styles.profileAction}
+                  onClick={() => void openProjectsDashboard()}
+                  disabled={profileBusy}
+                >
+                  My Projects
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              className={styles.profileAction}
+              onClick={() => setChangePasswordOpen((value) => !value)}
+              disabled={profileBusy}
+            >
+              Change Password
+            </button>
+            {changePasswordOpen ? (
+              <div className={styles.profilePasswordRow}>
+                <input
+                  type="password"
+                  className={styles.profilePasswordInput}
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  placeholder="new password"
+                  disabled={profileBusy}
+                />
+                <button
+                  type="button"
+                  className={styles.profileAction}
+                  onClick={() => void handleChangePassword()}
+                  disabled={profileBusy || newPassword.trim().length < 6}
+                >
+                  Save
+                </button>
+              </div>
+            ) : null}
+            {showWorkspaceProjectControls && isDemoScene ? (
+              <span className={styles.demoBadge}>DEMO - READ ONLY</span>
+            ) : null}
+            <button
+              type="button"
+              className={styles.profileDanger}
+              onClick={() => void handleSignOut()}
+              disabled={profileBusy}
+            >
+              Log Out
+            </button>
+            {profileError ? <p className={styles.profileError}>{profileError}</p> : null}
+          </div>
+        ) : null}
+      </div>
+    </header>
+  ) : null;
+
   if (appPhase === "dashboard") {
     return (
       <main className={styles.page}>
+        {workspaceHeader}
         <ProjectsDashboard
           projects={projects}
           isLoading={projectsLoading}
@@ -1584,107 +1784,7 @@ function MixerPage() {
 
   return (
     <main className={styles.page}>
-      {session ? (
-        <header className={styles.workspaceHeader}>
-          <button
-            type="button"
-            className={styles.workspaceBrand}
-            onClick={() => void openProjectsDashboard()}
-            aria-label="Go to projects dashboard"
-          >
-            foam
-          </button>
-          <div className={styles.profileWrap}>
-            <span className={styles.syncStatus}>
-              {syncStatusText}
-            </span>
-            <button
-              type="button"
-              className={styles.profileAvatar}
-              onClick={() => setProfileMenuOpen((value) => !value)}
-              aria-label="Open profile menu"
-            >
-              {user?.user_metadata?.avatar_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={String(user.user_metadata.avatar_url)} alt="" />
-              ) : (
-                <span>{avatarFallbackLetter}</span>
-              )}
-            </button>
-            {profileMenuOpen ? (
-              <div className={styles.profileMenu} style={{ viewTransitionName: "profile-menu" }}>
-                {username ? <p className={styles.profileEmail}>{username}</p> : null}
-                <p className={styles.profileEmail}>{user?.email}</p>
-                <input
-                  type="text"
-                  className={styles.profilePasswordInput}
-                  value={currentProjectTitle}
-                  onChange={(event) => {
-                    void handleProjectTitleChange(event.target.value);
-                  }}
-                  placeholder="project title"
-                  disabled={profileBusy || projectTitleBusy || !currentProjectId || isDemoScene}
-                />
-                <button
-                  type="button"
-                  className={styles.profileAction}
-                  onClick={() => void handleForceSaveNow()}
-                  disabled={profileBusy || !currentProjectId || isDemoScene}
-                >
-                  Save Project Now
-                </button>
-                <button
-                  type="button"
-                  className={styles.profileAction}
-                  onClick={() => void openProjectsDashboard()}
-                  disabled={profileBusy}
-                >
-                  My Projects
-                </button>
-                <button
-                  type="button"
-                  className={styles.profileAction}
-                  onClick={() => setChangePasswordOpen((value) => !value)}
-                  disabled={profileBusy}
-                >
-                  Change Password
-                </button>
-                {changePasswordOpen ? (
-                  <div className={styles.profilePasswordRow}>
-                    <input
-                      type="password"
-                      className={styles.profilePasswordInput}
-                      autoComplete="new-password"
-                      value={newPassword}
-                      onChange={(event) => setNewPassword(event.target.value)}
-                      placeholder="new password"
-                      disabled={profileBusy}
-                    />
-                    <button
-                      type="button"
-                      className={styles.profileAction}
-                      onClick={() => void handleChangePassword()}
-                      disabled={profileBusy || newPassword.trim().length < 6}
-                    >
-                      Save
-                    </button>
-                  </div>
-                ) : null}
-                {isDemoScene ? <span className={styles.demoBadge}>DEMO - READ ONLY</span> : null}
-                <button
-                  type="button"
-                  className={styles.profileDanger}
-                  onClick={() => void handleSignOut()}
-                  disabled={profileBusy}
-                >
-                  Log Out
-                </button>
-                {profileError ? <p className={styles.profileError}>{profileError}</p> : null}
-              </div>
-            ) : null}
-          </div>
-        </header>
-      ) : null}
+      {workspaceHeader}
       {shouldShowBootOverlay ? (
         <div className={styles.loadingScreen}>
           <h1>Sketching Spatial Lab</h1>
@@ -1774,79 +1874,99 @@ function MixerPage() {
 
       {!isNarrowScreen ? (
         <aside
-          className={`${styles.summaryDrawer} ${summaryTrackId ? styles.summaryDrawerOpen : ""}`}
+          className={`${styles.summaryDrawer} ${
+            summaryDrawerOpen ? styles.summaryDrawerOpen : styles.summaryDrawerClosed
+          }`}
         >
-          <div className={styles.summaryHeader}>
-            <h3 className={styles.summaryTitle}>
-              {summaryTrack ? (
-                <span className={styles.summaryTrackTitle}>
-                  <span
-                    className={styles.summaryTrackDot}
-                    style={{ backgroundColor: summaryTrack.color }}
-                  />
-                  <span className={styles.summaryTrackPrefix}>{`Track #${summaryTrackNumber}:`}</span>
-                  <span
-                    className={styles.summaryTrackName}
-                    title={`Track #${summaryTrackNumber}: ${summaryTrack.name}`}
-                  >
-                    {summaryTrack.name}
-                  </span>
-                </span>
+          {summaryDrawerOpen ? (
+            <>
+              <div className={styles.summaryHeader}>
+                <h3 className={styles.summaryTitle}>
+                  {summaryTrack ? (
+                    <span className={styles.summaryTrackTitle}>
+                      <span
+                        className={styles.summaryTrackDot}
+                        style={{ backgroundColor: summaryTrack.color }}
+                      />
+                      <span className={styles.summaryTrackPrefix}>{`Track #${summaryTrackNumber}:`}</span>
+                      <span
+                        className={styles.summaryTrackName}
+                        title={`Track #${summaryTrackNumber}: ${summaryTrack.name}`}
+                      >
+                        {summaryTrack.name}
+                      </span>
+                    </span>
+                  ) : (
+                    "Settings Summary"
+                  )}
+                </h3>
+                <button
+                  type="button"
+                  className={styles.summaryClose}
+                  onClick={() => setSummaryDrawerOpen(false)}
+                  aria-label="Close settings summary"
+                >
+                  ×
+                </button>
+              </div>
+              {summaryTrackId && summaryData ? (
+                <div className={styles.summaryBody}>
+                  {renderSummaryRows(summaryData, handleSummaryCopy)}
+                </div>
               ) : (
-                "Settings Summary"
+                <div className={styles.summaryEmptyState}>
+                  <p className={styles.summaryEmpty}>No track selected yet.</p>
+                  <p className={styles.summaryEmptyHint}>
+                    Click the info button on any track to open live diagnostics here.
+                  </p>
+                </div>
               )}
-            </h3>
+              {showDevDiagnostics && diagnostics ? (
+                <div className={styles.devDiagnosticsRows}>
+                  <div className={styles.summaryRowNoCopy}>
+                    <span className={styles.summaryKey}>Raw Distance</span>
+                    <span className={styles.summaryValue}>{diagnostics.distanceM.toFixed(2)}m</span>
+                  </div>
+                  <div className={styles.summaryRowNoCopy}>
+                    <span className={styles.summaryKey}>Attenuation</span>
+                    <span className={styles.summaryValue}>{diagnostics.attenuationDb.toFixed(1)} dB</span>
+                  </div>
+                  <div className={styles.summaryRowNoCopy}>
+                    <span className={styles.summaryKey}>Directivity Angle / Gain</span>
+                    <span className={styles.summaryValue}>
+                      {diagnostics.directivityAngleDeg.toFixed(1)}deg /{" "}
+                      {diagnostics.directivityGainDb.toFixed(1)} dB
+                    </span>
+                  </div>
+                  <div className={styles.summaryRowNoCopy}>
+                    <span className={styles.summaryKey}>Occlusion Filter</span>
+                    <span className={styles.summaryValue}>
+                      {Math.round(diagnostics.lowPassCutoffHz)} Hz
+                    </span>
+                  </div>
+                  <div className={styles.summaryRowNoCopy}>
+                    <span className={styles.summaryKey}>Occlusion Loss</span>
+                    <span className={styles.summaryValue}>
+                      {diagnostics.occlusionLossDb.toFixed(1)} dB
+                    </span>
+                  </div>
+                  <div className={styles.summaryRowNoCopy}>
+                    <span className={styles.summaryKey}>Blocking Columns</span>
+                    <span className={styles.summaryValue}>{diagnostics.occluderCount}</span>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : (
             <button
               type="button"
-              className={styles.summaryClose}
-              onClick={() => setSummaryTrackId(null)}
-              aria-label="Close settings summary"
+              className={styles.summaryPeek}
+              onClick={() => setSummaryDrawerOpen(true)}
+              aria-label="Open settings summary"
             >
-              ×
+              Settings Summary
             </button>
-          </div>
-          {summaryTrackId && summaryData ? (
-            <div className={styles.summaryBody}>
-              {renderSummaryRows(summaryData, handleSummaryCopy)}
-            </div>
-          ) : (
-            <p className={styles.summaryEmpty}>Pick a track via the info button.</p>
           )}
-          {showDevDiagnostics && diagnostics ? (
-            <div className={styles.devDiagnosticsRows}>
-              <div className={styles.summaryRowNoCopy}>
-                <span className={styles.summaryKey}>Raw Distance</span>
-                <span className={styles.summaryValue}>{diagnostics.distanceM.toFixed(2)}m</span>
-              </div>
-              <div className={styles.summaryRowNoCopy}>
-                <span className={styles.summaryKey}>Attenuation</span>
-                <span className={styles.summaryValue}>{diagnostics.attenuationDb.toFixed(1)} dB</span>
-              </div>
-              <div className={styles.summaryRowNoCopy}>
-                <span className={styles.summaryKey}>Directivity Angle / Gain</span>
-                <span className={styles.summaryValue}>
-                  {diagnostics.directivityAngleDeg.toFixed(1)}deg /{" "}
-                  {diagnostics.directivityGainDb.toFixed(1)} dB
-                </span>
-              </div>
-              <div className={styles.summaryRowNoCopy}>
-                <span className={styles.summaryKey}>Occlusion Filter</span>
-                <span className={styles.summaryValue}>
-                  {Math.round(diagnostics.lowPassCutoffHz)} Hz
-                </span>
-              </div>
-              <div className={styles.summaryRowNoCopy}>
-                <span className={styles.summaryKey}>Occlusion Loss</span>
-                <span className={styles.summaryValue}>
-                  {diagnostics.occlusionLossDb.toFixed(1)} dB
-                </span>
-              </div>
-              <div className={styles.summaryRowNoCopy}>
-                <span className={styles.summaryKey}>Blocking Columns</span>
-                <span className={styles.summaryValue}>{diagnostics.occluderCount}</span>
-              </div>
-            </div>
-          ) : null}
         </aside>
       ) : null}
 
@@ -1876,11 +1996,9 @@ function MixerPage() {
 
 function AuthenticatedApp() {
   return (
-    <>
-      <TrackStoreProvider>
-        <MixerPage />
-      </TrackStoreProvider>
-    </>
+    <TrackStoreProvider>
+      <MixerPage />
+    </TrackStoreProvider>
   );
 }
 

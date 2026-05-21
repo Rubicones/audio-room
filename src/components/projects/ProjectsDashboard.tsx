@@ -31,7 +31,8 @@ export function ProjectsDashboard({
         <h2 className={styles.dashboardTitle}>My Projects</h2>
         <div className={styles.dashboardActions}>
           <button type="button" className={styles.primaryBtn} onClick={onStartClean}>
-            New Project (Start Clean)
+            <span className={styles.plusIcon} aria-hidden>+</span>
+            <span>New Project</span>
           </button>
           <button type="button" className={styles.secondaryBtn} onClick={onLoadDemo}>
             Load Demo Scene

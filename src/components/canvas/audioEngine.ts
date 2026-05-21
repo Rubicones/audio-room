@@ -327,32 +327,32 @@ async function ensureTrackAudio(track: Track) {
 
   const loadPromise = (async () => {
     const { resonanceScene, audioContext } = getEngineState();
-    if (trackNodes.has(track.id) && sources.has(track.id) && players.has(track.id)) return;
+  if (trackNodes.has(track.id) && sources.has(track.id) && players.has(track.id)) return;
 
-    const source = resonanceScene.createSource();
-    const player = new Tone.Player({ loop: true, autostart: false });
-    player.mute = false;
+  const source = resonanceScene.createSource();
+  const player = new Tone.Player({ loop: true, autostart: false });
+  player.mute = false;
 
     const uiGain = audioContext.createGain();
-    const mixGain = audioContext.createGain();
-    const distanceGain = audioContext.createGain();
+  const mixGain = audioContext.createGain();
+  const distanceGain = audioContext.createGain();
     const shadowOcclusionGain = audioContext.createGain();
     const dynamicOcclusionGain = audioContext.createGain();
-    const airFilter = audioContext.createBiquadFilter();
-    airFilter.type = "lowpass";
-    airFilter.frequency.value = 20000;
-    airFilter.Q.value = 0.0001;
-    const occlusionFilter = audioContext.createBiquadFilter();
+  const airFilter = audioContext.createBiquadFilter();
+  airFilter.type = "lowpass";
+  airFilter.frequency.value = 20000;
+  airFilter.Q.value = 0.0001;
+  const occlusionFilter = audioContext.createBiquadFilter();
     const shadowFilter = audioContext.createBiquadFilter();
     const dynamicOcclusionFilter = audioContext.createBiquadFilter();
     uiGain.gain.value = Math.max(0.0001, BASE_TRACK_GAIN_LINEAR * gainDbToLinear(track.gainDb));
-    mixGain.gain.value = 1;
-    distanceGain.gain.value = 1;
+  mixGain.gain.value = 1;
+  distanceGain.gain.value = 1;
     shadowOcclusionGain.gain.value = 1;
     dynamicOcclusionGain.gain.value = 1;
-    occlusionFilter.type = "lowpass";
-    occlusionFilter.frequency.value = 12000;
-    occlusionFilter.Q.value = 0.7;
+  occlusionFilter.type = "lowpass";
+  occlusionFilter.frequency.value = 12000;
+  occlusionFilter.Q.value = 0.7;
     shadowFilter.type = "lowpass";
     shadowFilter.frequency.value = 20000;
     shadowFilter.Q.value = 0.7;
@@ -360,22 +360,22 @@ async function ensureTrackAudio(track: Track) {
     dynamicOcclusionFilter.frequency.value = 20000;
     dynamicOcclusionFilter.Q.value = 0.7;
 
-    // Tone node -> native graph -> Resonance source input.
+  // Tone node -> native graph -> Resonance source input.
     player.connect(uiGain);
     uiGain.connect(mixGain);
-    mixGain.connect(distanceGain);
-    distanceGain.connect(airFilter);
-    airFilter.connect(occlusionFilter);
+  mixGain.connect(distanceGain);
+  distanceGain.connect(airFilter);
+  airFilter.connect(occlusionFilter);
     occlusionFilter.connect(shadowOcclusionGain);
     shadowOcclusionGain.connect(shadowFilter);
     shadowFilter.connect(dynamicOcclusionFilter);
     dynamicOcclusionFilter.connect(dynamicOcclusionGain);
     dynamicOcclusionGain.connect(source.input);
 
-    try {
-      await player.load(track.audioUrl);
-    } catch (error) {
-      console.warn(`Failed to load track "${track.name}" from "${track.audioUrl}"`, error);
+  try {
+    await player.load(track.audioUrl);
+  } catch (error) {
+    console.warn(`Failed to load track "${track.name}" from "${track.audioUrl}"`, error);
       nodesCleanup(
         player,
         uiGain,
@@ -404,20 +404,20 @@ async function ensureTrackAudio(track: Track) {
         shadowFilter,
         dynamicOcclusionFilter
       );
-      return;
-    }
-    sources.set(track.id, source);
-    players.set(track.id, player);
-    trackNodes.set(track.id, {
-      player,
-      source,
+    return;
+  }
+  sources.set(track.id, source);
+  players.set(track.id, player);
+  trackNodes.set(track.id, {
+    player,
+    source,
       uiGain,
-      mixGain,
-      distanceGain,
+    mixGain,
+    distanceGain,
       shadowOcclusionGain,
       dynamicOcclusionGain,
-      airFilter,
-      occlusionFilter,
+    airFilter,
+    occlusionFilter,
       shadowFilter,
       dynamicOcclusionFilter,
     });
@@ -437,15 +437,15 @@ async function ensureTrackAudio(track: Track) {
       track.directivityAlpha,
       track.directivitySharpness
     );
-    refreshTrackMix();
+  refreshTrackMix();
 
-    if (isPlaying) {
-      const startAt = Tone.now() + 0.03;
-      try {
-        player.start(startAt, getSyncedOffsetSeconds(player));
-      } catch {
-        // Player may already be started.
-      }
+  if (isPlaying) {
+    const startAt = Tone.now() + 0.03;
+    try {
+      player.start(startAt, getSyncedOffsetSeconds(player));
+    } catch {
+      // Player may already be started.
+    }
     }
   })();
   ensureTrackAudioPromises.set(track.id, loadPromise);
@@ -523,7 +523,7 @@ function pruneTracks(validIds: string[]) {
     nodes?.distanceGain.disconnect();
     nodes?.shadowOcclusionGain.disconnect();
     nodes?.dynamicOcclusionGain.disconnect();
-    nodes?.airFilter.disconnect();
+  nodes?.airFilter.disconnect();
     nodes?.occlusionFilter.disconnect();
     nodes?.shadowFilter.disconnect();
     nodes?.dynamicOcclusionFilter.disconnect();

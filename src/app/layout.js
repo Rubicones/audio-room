@@ -1,5 +1,6 @@
 import { Itim } from "next/font/google";
 import { AuthStoreProvider } from "@/components/auth/AuthStore";
+import { AppToaster } from "@/components/ui/AppToaster";
 import "./globals.css";
 
 const itim = Itim({
@@ -79,7 +80,10 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" className={itim.variable}>
       <body>
-        <AuthStoreProvider>{children}</AuthStoreProvider>
+        <AuthStoreProvider>
+          {children}
+          <AppToaster />
+        </AuthStoreProvider>
       </body>
     </html>
   );
