@@ -456,6 +456,10 @@ function MixerPage() {
     isQuizModeActive &&
     acousticSettings.showAcousticShadows &&
     obstacles.length > 0;
+  const showPreviewDock =
+    workspaceActive &&
+    ((isQuizModeActive && !sessionUserId) ||
+      (isReadOnlyPreview && !isQuizModeActive));
   const replaceUrlWithProjectId = useCallback((projectId: string) => {
     if (typeof window === "undefined") return;
     const nextPath = getProjectSharePath(projectId, isQuizMode ? { quizMode: true } : undefined);
@@ -2303,8 +2307,8 @@ function MixerPage() {
   if (appPhase === "dashboard") {
     return (
       <main className={`${styles.page} ${styles.dashboardPage}`}>
+        {workspaceHeader}
         <div className={styles.dashboardShell}>
-          {workspaceHeader}
           <ProjectsDashboard
           projects={projects.map(toProjectListItem)}
           isLoading={projectsLoading}
@@ -2364,7 +2368,7 @@ function MixerPage() {
             loginLabel="log in"
           />
         </div>
-      ) : workspaceActive && isReadOnlyPreview ? (
+      ) : workspaceActive && isReadOnlyPreview && !isQuizModeActive ? (
         <div className={styles.previewDock}>
           <span className={styles.previewBadge}>preview mode (read-only)</span>
           {sessionUserId ? (
@@ -2575,7 +2579,11 @@ function MixerPage() {
 
       {copyToast ? <div className={styles.copyToast}>{copyToast}</div> : null}
 
-      <div className={styles.zoomControls}>
+      <div
+        className={`${styles.zoomControls} ${
+          showPreviewDock ? styles.zoomControlsAboveDock : ""
+        }`}
+      >
         <button
           type="button"
           className={styles.zoomBtn}

@@ -11,6 +11,12 @@
   box-shadow: 0 10px 30px rgba(10, 10, 10, 0.06);
   max-height: calc(100svh - 120px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.panelDashboard::-webkit-scrollbar {
+  display: none;
 }
 
 .dashboardHeader {

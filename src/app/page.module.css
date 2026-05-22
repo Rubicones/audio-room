@@ -47,15 +47,24 @@
 .dashboardPage {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: calc(12px + env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
-    calc(12px + env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding: calc(12px + env(safe-area-inset-top)) 0
+    calc(12px + env(safe-area-inset-bottom));
+}
+
+.dashboardPage::-webkit-scrollbar {
+  display: none;
 }
 
 .dashboardShell {
-  width: min(1100px, 100%);
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 max(24px, env(safe-area-inset-right)) 0 max(24px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -66,7 +75,11 @@
   top: auto;
   left: auto;
   right: auto;
+  width: 100%;
+  box-sizing: border-box;
   flex-shrink: 0;
+  padding: 0 max(24px, env(safe-area-inset-right)) 0 max(24px, env(safe-area-inset-left));
+  margin-bottom: 12px;
 }
 
 .workspaceBrand {
@@ -1257,6 +1270,10 @@
   gap: 8px;
 }
 
+.zoomControlsAboveDock {
+  bottom: calc(20px + 88px);
+}
+
 .zoomBtn {
   width: 44px;
   height: 44px;
@@ -1543,6 +1560,13 @@
   .workspaceHeaderInFlow {
     left: auto;
     right: auto;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  .dashboardShell {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
   }
 
   .profileWrap {
@@ -1568,6 +1592,32 @@
     top: calc(12px + 4px + 32px + 4px + 12px + env(safe-area-inset-top));
   }
 
+  .previewDock {
+    position: fixed;
+    left: 50%;
+    bottom: calc(12px + env(safe-area-inset-bottom) + max(0px, 100vh - 100svh));
+    transform: translateX(-50%);
+    max-width: calc(100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right));
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .previewBadge {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 12px;
+  }
+
+  .previewPrimaryBtn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
   .settingsGear {
     position: absolute;
     top: calc(60px + env(safe-area-inset-top));
@@ -1590,7 +1640,11 @@
 
   .zoomControls {
     right: calc(12px + env(safe-area-inset-right));
-    bottom: calc(12px + env(safe-area-inset-bottom) + (100vh - 100svh));
+    bottom: calc(12px + env(safe-area-inset-bottom) + max(0px, 100vh - 100svh));
+  }
+
+  .zoomControlsAboveDock {
+    bottom: calc(12px + env(safe-area-inset-bottom) + max(0px, 100vh - 100svh) + 88px);
   }
 
   .settingsGear:focus,
