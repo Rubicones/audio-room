@@ -440,6 +440,7 @@ function MixerPage() {
   const creatingProjectRef = useRef(false);
   const lastSavedConfigSnapshotRef = useRef<string | null>(null);
   const profileWrapRef = useRef<HTMLDivElement | null>(null);
+  const canvasWrapRef = useRef<HTMLElement | null>(null);
   const workspaceActive = appPhase === "workspace";
   const isReadOnlyPreview = Boolean(
     currentProjectId &&
@@ -1376,6 +1377,85 @@ function MixerPage() {
   const handleQuizIntroStart = useCallback(() => {
     setQuizIntroOpen(false);
   }, []);
+
+  const zoomOut = useCallback(() => {
+    setZoomSteps((z) => Math.max(-6, z - 1));
+  }, []);
+
+  const zoomIn = useCallback(() => {
+    setZoomSteps((z) => Math.min(8, z + 1));
+  }, []);
+
+  useEffect(() => {
+    const canvasWrap = canvasWrapRef.current;
+    if (!canvasWrap || !isBootReady) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY === 0) return;
+      event.preventDefault();
+      if (event.deltaY > 0) {
+        zoomOut();
+      } else {
+        zoomIn();
+      }
+    };
+
+    const touchDistance = (touches: TouchList) => {
+      if (touches.length < 2) return null;
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    let lastPinchDistance: number | null = null;
+    let pinchRemainder = 0;
+    const pinchDistancePerStep = 24;
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 2) return;
+      lastPinchDistance = touchDistance(event.touches);
+      pinchRemainder = 0;
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || lastPinchDistance === null) return;
+      event.preventDefault();
+      const distance = touchDistance(event.touches);
+      if (distance === null) return;
+
+      const delta = distance - lastPinchDistance;
+      lastPinchDistance = distance;
+      pinchRemainder += delta;
+
+      while (pinchRemainder >= pinchDistancePerStep) {
+        zoomIn();
+        pinchRemainder -= pinchDistancePerStep;
+      }
+      while (pinchRemainder <= -pinchDistancePerStep) {
+        zoomOut();
+        pinchRemainder += pinchDistancePerStep;
+      }
+    };
+
+    const resetPinch = (event: TouchEvent) => {
+      if (event.touches.length >= 2) return;
+      lastPinchDistance = null;
+      pinchRemainder = 0;
+    };
+
+    canvasWrap.addEventListener("wheel", handleWheel, { passive: false });
+    canvasWrap.addEventListener("touchstart", handleTouchStart, { passive: true });
+    canvasWrap.addEventListener("touchmove", handleTouchMove, { passive: false });
+    canvasWrap.addEventListener("touchend", resetPinch);
+    canvasWrap.addEventListener("touchcancel", resetPinch);
+    return () => {
+      canvasWrap.removeEventListener("wheel", handleWheel);
+      canvasWrap.removeEventListener("touchstart", handleTouchStart);
+      canvasWrap.removeEventListener("touchmove", handleTouchMove);
+      canvasWrap.removeEventListener("touchend", resetPinch);
+      canvasWrap.removeEventListener("touchcancel", resetPinch);
+    };
+  }, [isBootReady, zoomIn, zoomOut]);
 
   const handleQuizResultsClose = useCallback(() => {
     setQuizResultsOpen(false);
@@ -2460,7 +2540,7 @@ function MixerPage() {
         </div>
       ) : null}
 
-      <section className={styles.canvasWrap}>
+      <section ref={canvasWrapRef} className={styles.canvasWrap}>
         {isBootReady ? (
           <SceneCanvas
             view={view}
@@ -2588,7 +2668,7 @@ function MixerPage() {
           type="button"
           className={styles.zoomBtn}
           aria-label="Zoom out"
-          onClick={() => setZoomSteps((z) => Math.max(-6, z - 1))}
+          onClick={zoomOut}
         >
           −
         </button>
@@ -2596,7 +2676,7 @@ function MixerPage() {
           type="button"
           className={styles.zoomBtn}
           aria-label="Zoom in"
-          onClick={() => setZoomSteps((z) => Math.min(8, z + 1))}
+          onClick={zoomIn}
         >
           +
         </button>

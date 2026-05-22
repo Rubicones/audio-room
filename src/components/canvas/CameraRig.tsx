@@ -1,5 +1,4 @@
 import { OrthographicCamera } from "@react-three/drei";
-import gsap from "gsap";
 import { useEffect, useRef, useState } from "react";
 import { OrthographicCamera as ThreeOrthographicCamera, Vector3 } from "three";
 
@@ -42,24 +41,10 @@ export function CameraRig({ view, zoomSteps }: CameraRigProps) {
     const baseZoom = view === "top-down" ? (mobile ? 34 : 52) : mobile ? 28 : 44;
     const nextZoom = Math.max(16, Math.min(90, baseZoom + zoomSteps * 3));
 
-    gsap.to(camera.position, {
-      x: target.x,
-      y: target.y,
-      z: target.z,
-      duration: 0.7,
-      ease: "power2.inOut",
-      onUpdate: () => camera.lookAt(LOOK_AT),
-    });
-
-    gsap.to(camera, {
-      zoom: nextZoom,
-      duration: 0.7,
-      ease: "power2.inOut",
-      onUpdate: () => {
-        camera.lookAt(LOOK_AT);
-        camera.updateProjectionMatrix();
-      },
-    });
+    camera.position.set(target.x, target.y, target.z);
+    camera.zoom = nextZoom;
+    camera.lookAt(LOOK_AT);
+    camera.updateProjectionMatrix();
   }, [view, zoomSteps, mobile]);
 
   return (
