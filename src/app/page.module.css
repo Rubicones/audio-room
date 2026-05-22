@@ -103,6 +103,12 @@
   cursor: pointer;
 }
 
+.shareQuizGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .readOnlyControls {
   pointer-events: none;
   opacity: 0.72;

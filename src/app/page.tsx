@@ -66,6 +66,7 @@ import {
   type QuizTrackResult,
 } from "@/lib/quizScoring";
 import { QuizResultsModal } from "@/components/quiz/QuizResultsModal";
+import { QuizIntroModal } from "@/components/quiz/QuizIntroModal";
 import {
   isProjectTitleTaken,
   resolveUniqueProjectTitle,
@@ -430,6 +431,7 @@ function MixerPage() {
   const [quizReviewActive, setQuizReviewActive] = useState(false);
   const [quizResults, setQuizResults] = useState<QuizTrackResult[]>([]);
   const [quizMixCompare, setQuizMixCompare] = useState<QuizCompareMode>("actual");
+  const [quizIntroOpen, setQuizIntroOpen] = useState(false);
   const demoAutoStartedRef = useRef(false);
   const previousTrackCountRef = useRef(0);
   const saveDebounceRef = useRef<number | null>(null);
@@ -742,6 +744,7 @@ function MixerPage() {
             setQuizReviewActive(false);
             setQuizResults([]);
             setQuizMixCompare("actual");
+            setQuizIntroOpen(true);
             replaceProjectState({
               tracks: quizSources,
               roomScale: hydrated.roomScale,
@@ -967,6 +970,7 @@ function MixerPage() {
       setQuizReviewActive(false);
       setQuizResults([]);
       setQuizMixCompare("actual");
+      setQuizIntroOpen(false);
     });
     router.replace("/");
     await refreshProjects();
@@ -986,6 +990,7 @@ function MixerPage() {
           setQuizReviewActive(false);
           setQuizResults([]);
           setQuizMixCompare("actual");
+          setQuizIntroOpen(true);
           replaceProjectState({
             tracks: quizSources,
             roomScale: hydrated.roomScale,
@@ -1001,6 +1006,7 @@ function MixerPage() {
           previousTrackCountRef.current = quizSources.length;
         } else {
           setQuizCatalogTracks([]);
+          setQuizIntroOpen(false);
           replaceProjectState({
             tracks: hydratedTracks,
             roomScale: hydrated.roomScale,
@@ -1363,6 +1369,10 @@ function MixerPage() {
     setQuizMixCompare(mode);
   }, []);
 
+  const handleQuizIntroStart = useCallback(() => {
+    setQuizIntroOpen(false);
+  }, []);
+
   const handleQuizResultsClose = useCallback(() => {
     setQuizResultsOpen(false);
   }, []);
@@ -1446,6 +1456,9 @@ function MixerPage() {
     }
     window.setTimeout(() => setCopyToast(null), 1300);
   };
+
+  const showQuizIntro =
+    quizIntroOpen && isQuizModeActive && workspaceActive && isBootReady && !quizReviewActive;
 
   const sidebarContent = isQuizModeActive ? (
     <>
@@ -2115,13 +2128,16 @@ function MixerPage() {
             >
               share project
             </button>
-            <button
-              type="button"
-              className={styles.shareProjectBtn}
-              onClick={() => void handleShareProject(undefined, { quizMode: true })}
-            >
-              share as a Quiz
-            </button>
+            <span className={styles.shareQuizGroup}>
+              <button
+                type="button"
+                className={styles.shareProjectBtn}
+                onClick={() => void handleShareProject(undefined, { quizMode: true })}
+              >
+                share as a Quiz
+              </button>
+              <HelpTooltip text="Recipients open a quiz challenge, not your editable project. They hear the mix without seeing source positions, place each track where they think it belongs, optionally guess direction, then finish to see scores and compare their mix to the original." />
+            </span>
           </>
         ) : null}
         {showWorkspaceProjectControls && isDemoScene ? (
@@ -2543,6 +2559,8 @@ function MixerPage() {
           +
         </button>
       </div>
+
+      <QuizIntroModal open={showQuizIntro} onStart={handleQuizIntroStart} />
 
       <QuizResultsModal
         open={quizResultsOpen}
