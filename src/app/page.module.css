@@ -37,7 +37,7 @@
   top: 16px;
   left: 30px;
   right: 28px;
-  z-index: 18;
+  z-index: 24;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -423,6 +423,7 @@
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
+  z-index: 1;
   width: min(260px, 70vw);
   border: 2px solid var(--ink, #1a1a1a);
   border-radius: 14px;

@@ -2218,7 +2218,7 @@ function MixerPage() {
         foam
       </button>
       <div className={styles.profileWrap} ref={profileWrapRef}>
-        {workspaceActive && currentProjectId && !isReadOnlyPreview && !isDemoScene ? (
+        {workspaceActive && currentProjectId && isProjectEditable ? (
           <>
             <button
               type="button"
