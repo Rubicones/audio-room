@@ -1,14 +1,15 @@
 .panelDashboard {
-  width: min(1100px, calc(100vw - 48px));
-  margin: 52px auto 0;
+  width: 100%;
+  margin: 0;
   border: 2px solid var(--ink, #1a1a1a);
   border-radius: 18px;
   background: #fff;
   padding: 18px;
   display: grid;
   gap: 14px;
+  align-content: start;
   box-shadow: 0 10px 30px rgba(10, 10, 10, 0.06);
-  max-height: calc(100vh - 76px);
+  max-height: calc(100svh - 120px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   overflow-y: auto;
 }
 
@@ -87,11 +88,11 @@
 
 @media (max-width: 900px) {
   .panelDashboard {
-    width: calc(100vw - 20px);
-    margin: 10px auto;
-    max-height: calc(100svh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    width: 100%;
+    margin: 0;
     border-radius: 14px;
     padding: 14px;
+    max-height: calc(100svh - 96px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   }
 
   .dashboardHeader {
@@ -148,6 +149,37 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.projectCardDetails {
+  display: grid;
+  gap: 4px;
+}
+
+.projectCardDetailLine {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.projectCardDetailLabel {
+  opacity: 0.65;
+  text-transform: lowercase;
+}
+
+.projectCardDetailValue {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectCardDetailValueMuted {
+  opacity: 0.55;
 }
 
 .projectCardMeta {

@@ -19,6 +19,7 @@
 }
 
 .oauthLogoGoogle {
-  filter: saturate(200%);
+  filter: saturate(300%);
   transform: scale(1.08);
+  transform: translateX(-1px);
 }

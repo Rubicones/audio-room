@@ -52,6 +52,7 @@ import {
   getProjectSharePath,
   isProjectSharePath,
 } from "@/lib/projectRoute";
+import { getProjectCardSummary } from "@/lib/projectCardSummary";
 import styles from "./page.module.css";
 
 const PALETTE = ["#E16A6A", "#E5B94A", "#5BC489", "#7B5BE6", "#4A90E2", "#E07A5F"];
@@ -79,9 +80,21 @@ const DEMO_TRACK_FILES = [
 ] as const;
 const AUDIO_BUCKET = "audio";
 
-type ProjectRow = ProjectListItem & {
+type ProjectRow = {
+  id: string;
+  title: string;
+  updated_at: string;
   config: ProjectConfigJSON;
 };
+
+function toProjectListItem(project: ProjectRow): ProjectListItem {
+  return {
+    id: project.id,
+    title: project.title,
+    updated_at: project.updated_at,
+    ...getProjectCardSummary(project.config),
+  };
+}
 
 type AppPhase =
   | "initializing"
@@ -1743,7 +1756,11 @@ function MixerPage() {
   const showWorkspaceProjectControls = workspaceActive && !isReadOnlyPreview;
 
   const workspaceHeader = session ? (
-    <header className={styles.workspaceHeader}>
+    <header
+      className={`${styles.workspaceHeader}${
+        appPhase === "dashboard" ? ` ${styles.workspaceHeaderInFlow}` : ""
+      }`}
+    >
       <button
         type="button"
         className={styles.workspaceBrand}
@@ -1898,10 +1915,11 @@ function MixerPage() {
 
   if (appPhase === "dashboard") {
     return (
-      <main className={styles.page}>
-        {workspaceHeader}
-        <ProjectsDashboard
-          projects={projects}
+      <main className={`${styles.page} ${styles.dashboardPage}`}>
+        <div className={styles.dashboardShell}>
+          {workspaceHeader}
+          <ProjectsDashboard
+          projects={projects.map(toProjectListItem)}
           isLoading={projectsLoading}
           currentProjectId={currentProjectId}
           onOpenProject={(projectId) => void handleOpenProjectFromDashboard(projectId)}
@@ -1911,6 +1929,7 @@ function MixerPage() {
           onStartClean={() => void startApp("clean")}
           onLoadDemo={() => void startApp("demo")}
         />
+        </div>
       </main>
     );
   }

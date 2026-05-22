@@ -126,6 +126,24 @@ export function ProjectCard({
           />
         </div>
       ) : null}
+      <div className={styles.projectCardDetails}>
+        <p className={styles.projectCardDetailLine}>
+          <span className={styles.projectCardDetailLabel}>Tracks</span>
+          {project.trackNames.length > 0 ? (
+            <span className={styles.projectCardDetailValue}>{project.trackNames.join(", ")}</span>
+          ) : (
+            <span className={styles.projectCardDetailValueMuted}>none</span>
+          )}
+        </p>
+        <p className={styles.projectCardDetailLine}>
+          <span className={styles.projectCardDetailLabel}>Material</span>
+          <span className={styles.projectCardDetailValue}>{project.roomMaterial}</span>
+        </p>
+        <p className={styles.projectCardDetailLine}>
+          <span className={styles.projectCardDetailLabel}>Size</span>
+          <span className={styles.projectCardDetailValue}>{project.roomSize}</span>
+        </p>
+      </div>
       <p className={styles.projectCardMeta}>Last updated: {updatedLabel}</p>
     </article>
   );
