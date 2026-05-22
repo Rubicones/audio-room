@@ -348,7 +348,7 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                             >
                                 <span className={styles.oauthBtnContent}>
                                     <Image
-                                        src='/X_logo.webp'
+                                        src='/X_logo.svg'
                                         alt=''
                                         width={24}
                                         height={24}
