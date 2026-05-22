@@ -105,7 +105,7 @@ function createTrack(config: TrackConfig, trackIndex: number): Track {
   return {
     ...rest,
     id: config.id ?? crypto.randomUUID(),
-    position: randomSpawnPosition(),
+    position: config.position ?? randomSpawnPosition(),
     muted: false,
     solo: false,
     gainDb: Number.isFinite(config.gainDb) ? (config.gainDb as number) : 0,

@@ -75,6 +75,7 @@ export type TrackConfig = {
   name: string;
   color: string;
   audioUrl: string;
+  position?: Vec3;
   /** dB offset for inverse-square zone visualization (0 = reference). */
   gainDb?: number;
   isDirectivityEnabled?: boolean;
@@ -82,6 +83,10 @@ export type TrackConfig = {
   directivitySharpness?: number;
   rotationDeg?: number;
   showShadows?: boolean;
+  quizHidden?: boolean;
+  isQuizGuess?: boolean;
+  quizSourceTrackId?: string;
+  quizDisplayIndex?: number;
 };
 
 export type Track = Omit<TrackConfig, "gainDb"> & {
@@ -95,6 +100,12 @@ export type Track = Omit<TrackConfig, "gainDb"> & {
   directivitySharpness: number;
   rotationDeg: number;
   showShadows: boolean;
+  /** Audio source in quiz mode — plays at saved position but not rendered. */
+  quizHidden?: boolean;
+  /** Visual-only placement guess in quiz mode — no audio. */
+  isQuizGuess?: boolean;
+  quizSourceTrackId?: string;
+  quizDisplayIndex?: number;
 };
 
 export type ObstacleType = "cylinder" | "box" | "wall-with-window";

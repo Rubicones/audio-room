@@ -56,6 +56,8 @@ function ringPoints(
   return pts;
 }
 
+type TrackNodeVariant = "default" | "guess" | "actual";
+
 type TrackNodesProps = {
   tracks: Track[];
   onTrackDragCommit: (trackId: string, position: [number, number, number]) => void;
@@ -66,6 +68,9 @@ type TrackNodesProps = {
   roomScale: [number, number, number];
   onDraggingTrackChange?: (trackId: string | null) => void;
   isReadOnly?: boolean;
+  isListenerReadOnly?: boolean;
+  isTrackReadOnly?: boolean;
+  showQuizReview?: boolean;
 };
 
 function ListenerHeadphones({
@@ -112,6 +117,8 @@ type TrackNodeProps = {
   index: number;
   listenerPos: Vector3;
   isDragging: boolean;
+  variant: TrackNodeVariant;
+  reviewMode: boolean;
   groupRef: (group: Group | null) => void;
   onPointerDown: (event: ThreeEvent<PointerEvent>) => void;
   onPointerMove: (event: ThreeEvent<PointerEvent>) => void;
@@ -124,6 +131,8 @@ function TrackNode({
   index,
   listenerPos,
   isDragging,
+  variant,
+  reviewMode,
   groupRef,
   onPointerDown,
   onPointerMove,
@@ -137,8 +146,13 @@ function TrackNode({
   const circlePoints = useMemo(() => ringPoints(NODE_RADIUS, 80), []);
   const fontUrl = useItimFontUrl();
   const [hovered, setHovered] = useState(false);
-  const showLabel = hovered || isDragging;
+  const showLabel = reviewMode || hovered || isDragging;
   const direction = getForwardDirectionFromRotationDeg(track.rotationDeg);
+  const ringColor = variant === "actual" ? INK : track.color;
+  const ringDashed = variant === "actual";
+  const fillOpacity = variant === "actual" ? 0.72 : 1;
+  const reviewTag =
+    variant === "actual" ? "actual" : variant === "guess" ? "your guess" : null;
 
   return (
     <group ref={groupRef} position={track.position}>
@@ -172,7 +186,7 @@ function TrackNode({
           }}
         >
           <primitive object={NODE_DISC_GEOMETRY} attach="geometry" />
-          <meshBasicMaterial color="#ffffff" toneMapped={false} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={fillOpacity} toneMapped={false} />
         </mesh>
         {/* Larger invisible touch target so mobile drag is easier to grab. */}
         <mesh
@@ -190,7 +204,14 @@ function TrackNode({
             toneMapped={false}
           />
         </mesh>
-        <Line points={circlePoints} color={track.color} lineWidth={3} />
+        <Line
+          points={circlePoints}
+          color={ringColor}
+          lineWidth={variant === "actual" ? 2.4 : 3}
+          dashed={ringDashed}
+          dashSize={0.16}
+          gapSize={0.1}
+        />
         <Text
           position={[0, 0, 0.001]}
           fontSize={0.42}
@@ -293,6 +314,9 @@ export function TrackNodes({
   roomScale,
   onDraggingTrackChange,
   isReadOnly = false,
+  isListenerReadOnly = isReadOnly,
+  isTrackReadOnly = isReadOnly,
+  showQuizReview = false,
 }: TrackNodesProps) {
   const [draggingTrackId, setDraggingTrackId] = useState<string | null>(null);
   const [draggingListener, setDraggingListener] = useState(false);
@@ -373,6 +397,12 @@ export function TrackNodes({
 
   const dragPlaneWidth = 10 * roomScale[0];
   const dragPlaneDepth = 10 * roomScale[2];
+  const visibleTracks = useMemo(() => {
+    if (showQuizReview) {
+      return tracks.filter((track) => track.isQuizGuess || track.quizHidden);
+    }
+    return tracks.filter((track) => !track.quizHidden);
+  }, [tracks, showQuizReview]);
 
   return (
     <>
@@ -382,6 +412,7 @@ export function TrackNodes({
         visible={draggingTrackId !== null || draggingListener}
         onPointerMove={(event) => {
           if (draggingListenerRef.current) {
+            if (isListenerReadOnly) return;
             event.stopPropagation();
             updateListenerDragFromEvent(event);
             return;
@@ -393,6 +424,7 @@ export function TrackNodes({
         }}
         onPointerUp={(event) => {
           if (draggingListenerRef.current) {
+            if (isListenerReadOnly) return;
             event.stopPropagation();
             updateListenerDragFromEvent(event);
             commitListenerDrag();
@@ -411,6 +443,7 @@ export function TrackNodes({
         }}
         onPointerOut={(event) => {
           if (draggingListenerRef.current) {
+            if (isListenerReadOnly) return;
             if (event.pointerType !== "touch") return;
             updateListenerDragFromEvent(event);
             return;
@@ -434,7 +467,7 @@ export function TrackNodes({
         <Billboard>
           <mesh
             onPointerDown={(event) => {
-              if (isReadOnly) return;
+              if (isListenerReadOnly) return;
               event.stopPropagation();
               const target = event.target as Element & {
                 setPointerCapture?: (id: number) => void;
@@ -444,13 +477,13 @@ export function TrackNodes({
               updateListenerDragFromEvent(event);
             }}
             onPointerMove={(event) => {
-              if (isReadOnly) return;
+              if (isListenerReadOnly) return;
               if (!draggingListenerRef.current) return;
               event.stopPropagation();
               updateListenerDragFromEvent(event);
             }}
             onPointerUp={(event) => {
-              if (isReadOnly) return;
+              if (isListenerReadOnly) return;
               if (!draggingListenerRef.current) return;
               event.stopPropagation();
               updateListenerDragFromEvent(event);
@@ -464,7 +497,7 @@ export function TrackNodes({
             }}
             onPointerOver={(event) => {
               event.stopPropagation();
-              document.body.style.cursor = isReadOnly ? "" : "grab";
+              document.body.style.cursor = isListenerReadOnly ? "" : "grab";
             }}
             onPointerOut={(event) => {
               event.stopPropagation();
@@ -476,7 +509,7 @@ export function TrackNodes({
           </mesh>
           <mesh
             onPointerDown={(event) => {
-              if (isReadOnly) return;
+              if (isListenerReadOnly) return;
               event.stopPropagation();
               const target = event.target as Element & {
                 setPointerCapture?: (id: number) => void;
@@ -487,13 +520,13 @@ export function TrackNodes({
               updateListenerDragFromEvent(event);
             }}
             onPointerMove={(event) => {
-              if (isReadOnly) return;
+              if (isListenerReadOnly) return;
               if (!draggingListenerRef.current) return;
               event.stopPropagation();
               updateListenerDragFromEvent(event);
             }}
             onPointerUp={(event) => {
-              if (isReadOnly) return;
+              if (isListenerReadOnly) return;
               if (!draggingListenerRef.current) return;
               event.stopPropagation();
               updateListenerDragFromEvent(event);
@@ -507,7 +540,7 @@ export function TrackNodes({
             }}
             onPointerOver={(event) => {
               event.stopPropagation();
-              document.body.style.cursor = isReadOnly ? "" : "grab";
+              document.body.style.cursor = isListenerReadOnly ? "" : "grab";
             }}
             onPointerOut={(event) => {
               event.stopPropagation();
@@ -527,7 +560,7 @@ export function TrackNodes({
         </Billboard>
         <ListenerHeadphones
           onPointerDown={(event) => {
-            if (isReadOnly) return;
+            if (isListenerReadOnly) return;
             event.stopPropagation();
             event.preventDefault();
             startListenerDrag();
@@ -535,13 +568,26 @@ export function TrackNodes({
         />
       </group>
 
-      {tracks.map((track, index) => (
+      {visibleTracks.map((track, index) => {
+        const linkedGuessIndex = track.quizHidden
+          ? tracks.find(
+              (entry) => entry.isQuizGuess && entry.quizSourceTrackId === track.id
+            )?.quizDisplayIndex
+          : undefined;
+        const displayIndex =
+          track.quizDisplayIndex ?? linkedGuessIndex ?? index + 1;
+
+        return (
         <TrackNode
           key={track.id}
           track={track}
-          index={index}
+          index={displayIndex - 1}
           listenerPos={listenerPos}
           isDragging={draggingTrackId === track.id}
+          variant={
+            track.quizHidden ? "actual" : track.isQuizGuess ? "guess" : "default"
+          }
+          reviewMode={showQuizReview}
           groupRef={(group) => {
             onTrackRef(track.id, group ?? null);
             if (!group) {
@@ -551,7 +597,7 @@ export function TrackNodes({
             }
           }}
           onPointerDown={(event) => {
-            if (isReadOnly) return;
+            if (isTrackReadOnly) return;
             event.stopPropagation();
             const target = event.target as Element & {
               setPointerCapture?: (id: number) => void;
@@ -563,13 +609,13 @@ export function TrackNodes({
             updateDragFromEvent(event, track.id);
           }}
           onPointerMove={(event) => {
-            if (isReadOnly) return;
+            if (isTrackReadOnly) return;
             if (draggingTrackIdRef.current !== track.id) return;
             event.stopPropagation();
             updateDragFromEvent(event, track.id);
           }}
           onPointerUp={(event) => {
-            if (isReadOnly) return;
+            if (isTrackReadOnly) return;
             if (draggingTrackIdRef.current !== track.id) return;
             event.stopPropagation();
             updateDragFromEvent(event, track.id);
@@ -590,7 +636,8 @@ export function TrackNodes({
             }
           }}
         />
-      ))}
+        );
+      })}
     </>
   );
 }

@@ -1,0 +1,137 @@
+.quizModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(10, 10, 10, 0.42);
+}
+
+.quizModal {
+  width: min(560px, 100%);
+  max-height: min(82vh, 760px);
+  display: flex;
+  flex-direction: column;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 40px rgba(10, 10, 10, 0.14);
+}
+
+.quizModalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.12);
+}
+
+.quizModalTitle {
+  margin: 0;
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.quizModalClose {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.quizModalSummary {
+  padding: 12px 18px;
+  font-family: inherit;
+  font-size: 14px;
+  color: rgba(26, 26, 26, 0.78);
+  border-bottom: 1px solid rgba(26, 26, 26, 0.08);
+}
+
+.quizModalList {
+  overflow: auto;
+  padding: 12px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quizResultCard {
+  border: 1.5px solid rgba(26, 26, 26, 0.16);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quizResultCardHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quizResultTrackName {
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quizResultScore {
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.quizResultScoreGood {
+  color: #2f8f57;
+}
+
+.quizResultScoreMid {
+  color: #b07a1d;
+}
+
+.quizResultScoreLow {
+  color: #b54a4a;
+}
+
+.quizResultBreakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  color: rgba(26, 26, 26, 0.82);
+}
+
+.quizResultDetails {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(26, 26, 26, 0.04);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(26, 26, 26, 0.72);
+}
+
+.quizResultUnplaced {
+  font-family: inherit;
+  font-size: 13px;
+  color: rgba(26, 26, 26, 0.62);
+  font-style: italic;
+}

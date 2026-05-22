@@ -51,8 +51,26 @@ import {
   getProjectIdFromPath,
   getProjectSharePath,
   isProjectSharePath,
+  isQuizModeSearch,
 } from "@/lib/projectRoute";
 import { getProjectCardSummary } from "@/lib/projectCardSummary";
+import {
+  getQuizAudioTrackIds,
+  getQuizGuessTrackId,
+  toQuizSourceTracks,
+  type QuizCompareMode,
+} from "@/lib/quizTracks";
+import {
+  scoreQuizTracks,
+  toQuizReviewPairs,
+  type QuizTrackResult,
+} from "@/lib/quizScoring";
+import { QuizResultsModal } from "@/components/quiz/QuizResultsModal";
+import {
+  isProjectTitleTaken,
+  resolveUniqueProjectTitle,
+  stableConfigSnapshot,
+} from "@/lib/projectSave";
 import styles from "./page.module.css";
 
 const PALETTE = ["#E16A6A", "#E5B94A", "#5BC489", "#7B5BE6", "#4A90E2", "#E07A5F"];
@@ -136,13 +154,16 @@ function buildDemoTracks(startIndex: number): TrackConfig[] {
 function RotationDial({
   value,
   onChange,
+  disabled = false,
 }: {
   value: number;
   onChange: (value: number) => void;
+  disabled?: boolean;
 }) {
   const dialRef = useRef<HTMLDivElement | null>(null);
 
   const setFromClientPoint = (clientX: number, clientY: number) => {
+    if (disabled) return;
     const dial = dialRef.current;
     if (!dial) return;
     const rect = dial.getBoundingClientRect();
@@ -163,13 +184,15 @@ function RotationDial({
     <div className={styles.rotationDialWrap}>
       <div
         ref={dialRef}
-        className={styles.rotationDial}
+        className={`${styles.rotationDial} ${disabled ? styles.rotationDialDisabled : ""}`}
         onPointerDown={(event) => {
+          if (disabled) return;
           const target = event.currentTarget;
           target.setPointerCapture(event.pointerId);
           setFromClientPoint(event.clientX, event.clientY);
         }}
         onPointerMove={(event) => {
+          if (disabled) return;
           const target = event.currentTarget;
           if (!target.hasPointerCapture(event.pointerId)) return;
           setFromClientPoint(event.clientX, event.clientY);
@@ -320,6 +343,14 @@ function MixerPage() {
   const router = useRouter();
   const pathname = usePathname();
   const projectIdFromPath = useMemo(() => getProjectIdFromPath(pathname), [pathname]);
+  const [isQuizMode, setIsQuizMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return isQuizModeSearch(window.location.search);
+  });
+
+  useEffect(() => {
+    setIsQuizMode(isQuizModeSearch(window.location.search));
+  }, [pathname]);
   const username = String(
     user?.user_metadata?.username ??
       user?.user_metadata?.preferred_username ??
@@ -394,12 +425,18 @@ function MixerPage() {
   const [isDemoScene, setIsDemoScene] = useState(false);
   const [isHydrating, setIsHydrating] = useState(false);
   const [pendingUploadsCount, setPendingUploadsCount] = useState(0);
+  const [quizCatalogTracks, setQuizCatalogTracks] = useState<Track[]>([]);
+  const [quizResultsOpen, setQuizResultsOpen] = useState(false);
+  const [quizReviewActive, setQuizReviewActive] = useState(false);
+  const [quizResults, setQuizResults] = useState<QuizTrackResult[]>([]);
+  const [quizMixCompare, setQuizMixCompare] = useState<QuizCompareMode>("actual");
   const demoAutoStartedRef = useRef(false);
   const previousTrackCountRef = useRef(0);
   const saveDebounceRef = useRef<number | null>(null);
   const loadingProjectRef = useRef(false);
   const loadedProjectIdRef = useRef<string | null>(null);
   const creatingProjectRef = useRef(false);
+  const lastSavedConfigSnapshotRef = useRef<string | null>(null);
   const profileWrapRef = useRef<HTMLDivElement | null>(null);
   const workspaceActive = appPhase === "workspace";
   const isReadOnlyPreview = Boolean(
@@ -407,13 +444,22 @@ function MixerPage() {
       currentProjectOwnerId &&
       currentProjectOwnerId !== sessionUserId
   );
-  const isProjectEditable = !isReadOnlyPreview && !isDemoScene;
+  const isQuizModeActive = isQuizMode && Boolean(currentProjectId);
+  const isProjectEditable = !isReadOnlyPreview && !isDemoScene && !isQuizModeActive;
+  const isListenerLocked = isReadOnlyPreview || isQuizModeActive;
+  const isSceneTrackReadOnly =
+    (isReadOnlyPreview && !isQuizModeActive) || quizReviewActive;
+  const isSceneObstacleReadOnly = isReadOnlyPreview || isQuizModeActive;
+  const showQuizSceneObstacles =
+    isQuizModeActive &&
+    acousticSettings.showAcousticShadows &&
+    obstacles.length > 0;
   const replaceUrlWithProjectId = useCallback((projectId: string) => {
     if (typeof window === "undefined") return;
-    const nextPath = getProjectSharePath(projectId);
-    if (window.location.pathname === nextPath) return;
+    const nextPath = getProjectSharePath(projectId, isQuizMode ? { quizMode: true } : undefined);
+    if (window.location.pathname + window.location.search === nextPath) return;
     window.history.replaceState(window.history.state, "", nextPath);
-  }, []);
+  }, [isQuizMode]);
 
 
   const runTransition = (update: () => void) => {
@@ -527,13 +573,23 @@ function MixerPage() {
     return next;
   }, [sessionUserId]);
 
+  const markProjectSavedBaseline = useCallback((config: ProjectConfigJSON) => {
+    lastSavedConfigSnapshotRef.current = stableConfigSnapshot(config);
+  }, []);
+
   const performProjectSave = useCallback(
     async (overrideConfig?: ProjectConfigJSON) => {
       if (!supabase || !currentProjectId || !isProjectEditable || isHydrating) return false;
+      const configToSave = overrideConfig ?? persistedProjectConfig;
+      const nextSnapshot = stableConfigSnapshot(configToSave);
+      if (nextSnapshot === lastSavedConfigSnapshotRef.current) {
+        setSaveState("saved");
+        return true;
+      }
       setSaveState("saving");
       const { error } = await supabase
         .from("projects")
-        .update({ config: overrideConfig ?? persistedProjectConfig, updated_at: new Date().toISOString() })
+        .update({ config: configToSave, updated_at: new Date().toISOString() })
         .eq("id", currentProjectId);
       if (error) {
         setSaveState("error");
@@ -541,6 +597,7 @@ function MixerPage() {
         toast.error(error.message);
         return false;
       }
+      lastSavedConfigSnapshotRef.current = nextSnapshot;
       setSaveState("saved");
       return true;
     },
@@ -550,6 +607,7 @@ function MixerPage() {
   const ensurePersistedProject = useCallback(
     async (preferredTitle?: string) => {
       if (!supabase || !sessionUserId || !isProjectEditable || isHydrating) return null;
+      if (projectIdFromPath || loadingProjectRef.current || loadedProjectIdRef.current) return null;
       if (currentProjectId) return currentProjectId;
       if (creatingProjectRef.current) return null;
       creatingProjectRef.current = true;
@@ -560,11 +618,13 @@ function MixerPage() {
         tracks[0]?.name?.trim() ||
         "Untitled project";
       try {
+        const knownProjects = projects.length > 0 ? projects : await refreshProjects();
+        const uniqueTitle = resolveUniqueProjectTitle(fallbackTitle, knownProjects);
         const { data, error } = await supabase
           .from("projects")
           .insert({
             user_id: sessionUserId,
-            title: fallbackTitle,
+            title: uniqueTitle,
             config: persistedProjectConfig,
           })
           .select("id,title,config,updated_at")
@@ -576,8 +636,10 @@ function MixerPage() {
           return null;
         }
         setCurrentProjectId(data.id);
-        setCurrentProjectTitle(data.title || fallbackTitle);
+        setCurrentProjectTitle(data.title || uniqueTitle);
         setIsDemoScene(false);
+        loadedProjectIdRef.current = data.id;
+        markProjectSavedBaseline(data.config as ProjectConfigJSON);
         replaceUrlWithProjectId(data.id);
         setSaveState("saved");
         void refreshProjects();
@@ -591,7 +653,10 @@ function MixerPage() {
       currentProjectTitle,
       isProjectEditable,
       isHydrating,
+      markProjectSavedBaseline,
       persistedProjectConfig,
+      projectIdFromPath,
+      projects,
       refreshProjects,
       replaceUrlWithProjectId,
       sessionUserId,
@@ -670,26 +735,50 @@ function MixerPage() {
         try {
           const hydrated = deserializeProjectConfig(data.config as ProjectConfigJSON);
           const hydratedTracks = await resolveTrackPlaybackUrls(hydrated.tracks);
-          replaceProjectState({
-            tracks: hydratedTracks,
-            roomScale: hydrated.roomScale,
-            obstacles: hydrated.obstacles,
-            acousticSettings: {
-              roomMaterial: hydrated.roomMaterial,
-              enableAirAbsorption: hydrated.airAbsorptionEnabled,
-              showAcousticShadows: hydrated.showShadows,
-              showAttenuationZones: hydrated.showAttenuation,
-              showCriticalDistance: hydrated.showCriticalDistance,
-            },
-          });
+          if (isQuizMode) {
+            const quizSources = toQuizSourceTracks(hydratedTracks);
+            setQuizCatalogTracks(hydratedTracks);
+            setQuizResultsOpen(false);
+            setQuizReviewActive(false);
+            setQuizResults([]);
+            setQuizMixCompare("actual");
+            replaceProjectState({
+              tracks: quizSources,
+              roomScale: hydrated.roomScale,
+              obstacles: hydrated.obstacles,
+              acousticSettings: {
+                roomMaterial: hydrated.roomMaterial,
+                enableAirAbsorption: hydrated.airAbsorptionEnabled,
+                showAcousticShadows: hydrated.showShadows,
+                showAttenuationZones: hydrated.showAttenuation,
+                showCriticalDistance: hydrated.showCriticalDistance,
+              },
+            });
+            previousTrackCountRef.current = quizSources.length;
+          } else {
+            setQuizCatalogTracks([]);
+            replaceProjectState({
+              tracks: hydratedTracks,
+              roomScale: hydrated.roomScale,
+              obstacles: hydrated.obstacles,
+              acousticSettings: {
+                roomMaterial: hydrated.roomMaterial,
+                enableAirAbsorption: hydrated.airAbsorptionEnabled,
+                showAcousticShadows: hydrated.showShadows,
+                showAttenuationZones: hydrated.showAttenuation,
+                showCriticalDistance: hydrated.showCriticalDistance,
+              },
+            });
+            previousTrackCountRef.current = hydratedTracks.length;
+          }
           setListenerPosition(hydrated.listenerPosition);
           setCurrentProjectId(data.id);
           setCurrentProjectOwnerId(data.user_id);
           setCurrentProjectTitle(data.title || "Untitled project");
+          markProjectSavedBaseline(data.config as ProjectConfigJSON);
           setIsDemoScene(false);
           setSaveState("saved");
           setIsBootReady(false);
-          previousTrackCountRef.current = hydratedTracks.length;
           loadedProjectIdRef.current = projectIdFromPath;
           loadingProjectRef.current = false;
           setAppPhase("workspace");
@@ -720,7 +809,7 @@ function MixerPage() {
     return () => {
       active = false;
     };
-  }, [isLoading, projectIdFromPath, refreshProjects, replaceProjectState, resolveTrackPlaybackUrls, router, sessionUserId]);
+  }, [isLoading, isQuizMode, markProjectSavedBaseline, projectIdFromPath, refreshProjects, replaceProjectState, resolveTrackPlaybackUrls, router, sessionUserId]);
 
   useEffect(() => {
     if (!sessionUserId || typeof window === "undefined") return;
@@ -740,6 +829,7 @@ function MixerPage() {
 
   useEffect(() => {
     if (!supabase || !sessionUserId || currentProjectId || !isProjectEditable || isHydrating) return;
+    if (projectIdFromPath || loadingProjectRef.current || loadedProjectIdRef.current) return;
     if (persistedProjectConfig.tracks.length === 0) return;
     const firstTrackName =
       persistedProjectConfig.tracks[0]?.name?.trim() ||
@@ -752,6 +842,7 @@ function MixerPage() {
     isProjectEditable,
     isHydrating,
     persistedProjectConfig.tracks,
+    projectIdFromPath,
     sessionUserId,
     tracks,
   ]);
@@ -760,6 +851,11 @@ function MixerPage() {
     if (!currentProjectId) return;
     if (!isProjectEditable || isHydrating) return;
     if (loadingProjectRef.current) return;
+    const nextSnapshot = stableConfigSnapshot(persistedProjectConfig);
+    if (nextSnapshot === lastSavedConfigSnapshotRef.current) {
+      setSaveState("saved");
+      return;
+    }
     setSaveState("saving");
     if (saveDebounceRef.current) {
       window.clearTimeout(saveDebounceRef.current);
@@ -772,7 +868,7 @@ function MixerPage() {
         window.clearTimeout(saveDebounceRef.current);
       }
     };
-  }, [currentProjectConfig, currentProjectId, isProjectEditable, isHydrating, performProjectSave]);
+  }, [currentProjectId, isProjectEditable, isHydrating, performProjectSave, persistedProjectConfig]);
 
   useEffect(() => {
     if (!workspaceActive) return;
@@ -827,6 +923,7 @@ function MixerPage() {
   const startApp = async (mode: "clean" | "demo") => {
     await Tone.start();
     loadedProjectIdRef.current = null;
+    lastSavedConfigSnapshotRef.current = null;
     resetProjectState();
     setProfileError("");
     setListenerPosition([0, 0.5, 0]);
@@ -849,6 +946,7 @@ function MixerPage() {
   const openProjectsDashboard = useCallback(async () => {
     disposeAudioEngine();
     loadedProjectIdRef.current = null;
+    lastSavedConfigSnapshotRef.current = null;
     runTransition(() => {
       setAppPhase("dashboard");
       setStartMode(null);
@@ -864,6 +962,11 @@ function MixerPage() {
       setProfileError("");
       resetProjectState();
       setListenerPosition([0, 0.5, 0]);
+      setQuizCatalogTracks([]);
+      setQuizResultsOpen(false);
+      setQuizReviewActive(false);
+      setQuizResults([]);
+      setQuizMixCompare("actual");
     });
     router.replace("/");
     await refreshProjects();
@@ -871,47 +974,109 @@ function MixerPage() {
 
   const loadProject = useCallback(
     async (project: ProjectRow) => {
+      loadingProjectRef.current = true;
       setIsHydrating(true);
       try {
         const hydrated = deserializeProjectConfig(project.config);
         const hydratedTracks = await resolveTrackPlaybackUrls(hydrated.tracks);
-        replaceProjectState({
-          tracks: hydratedTracks,
-          roomScale: hydrated.roomScale,
-          obstacles: hydrated.obstacles,
-          acousticSettings: {
-            roomMaterial: hydrated.roomMaterial,
-            enableAirAbsorption: hydrated.airAbsorptionEnabled,
-            showAcousticShadows: hydrated.showShadows,
-            showAttenuationZones: hydrated.showAttenuation,
-            showCriticalDistance: hydrated.showCriticalDistance,
-          },
-        });
+        if (isQuizMode) {
+          const quizSources = toQuizSourceTracks(hydratedTracks);
+          setQuizCatalogTracks(hydratedTracks);
+          setQuizResultsOpen(false);
+          setQuizReviewActive(false);
+          setQuizResults([]);
+          setQuizMixCompare("actual");
+          replaceProjectState({
+            tracks: quizSources,
+            roomScale: hydrated.roomScale,
+            obstacles: hydrated.obstacles,
+            acousticSettings: {
+              roomMaterial: hydrated.roomMaterial,
+              enableAirAbsorption: hydrated.airAbsorptionEnabled,
+              showAcousticShadows: hydrated.showShadows,
+              showAttenuationZones: hydrated.showAttenuation,
+              showCriticalDistance: hydrated.showCriticalDistance,
+            },
+          });
+          previousTrackCountRef.current = quizSources.length;
+        } else {
+          setQuizCatalogTracks([]);
+          replaceProjectState({
+            tracks: hydratedTracks,
+            roomScale: hydrated.roomScale,
+            obstacles: hydrated.obstacles,
+            acousticSettings: {
+              roomMaterial: hydrated.roomMaterial,
+              enableAirAbsorption: hydrated.airAbsorptionEnabled,
+              showAcousticShadows: hydrated.showShadows,
+              showAttenuationZones: hydrated.showAttenuation,
+              showCriticalDistance: hydrated.showCriticalDistance,
+            },
+          });
+          previousTrackCountRef.current = hydratedTracks.length;
+        }
         setListenerPosition(hydrated.listenerPosition);
         setCurrentProjectId(project.id);
         setCurrentProjectOwnerId(sessionUserId);
         setCurrentProjectTitle(project.title || "Untitled project");
+        markProjectSavedBaseline(project.config);
         setIsBootReady(false);
         setAppPhase("workspace");
         setIsDemoScene(false);
         setSaveState("saved");
-        previousTrackCountRef.current = hydratedTracks.length;
         loadedProjectIdRef.current = project.id;
         replaceUrlWithProjectId(project.id);
       } finally {
+        loadingProjectRef.current = false;
         setIsHydrating(false);
       }
     },
-    [replaceProjectState, replaceUrlWithProjectId, resolveTrackPlaybackUrls, sessionUserId]
+    [
+      isQuizMode,
+      markProjectSavedBaseline,
+      replaceProjectState,
+      replaceUrlWithProjectId,
+      resolveTrackPlaybackUrls,
+      sessionUserId,
+    ]
   );
 
-  const handleShareProject = async (projectId?: string) => {
+  const handlePlaceQuizTrack = useCallback(
+    (catalogTrack: Track, displayIndex: number) => {
+      const guessId = getQuizGuessTrackId(catalogTrack.id);
+      if (tracks.some((track) => track.id === guessId)) return;
+      addTracks([
+        {
+          id: guessId,
+          name: catalogTrack.name,
+          color: catalogTrack.color,
+          audioUrl: "",
+          isQuizGuess: true,
+          quizSourceTrackId: catalogTrack.id,
+          quizDisplayIndex: displayIndex,
+          isDirectivityEnabled: false,
+          directivityAlpha: catalogTrack.directivityAlpha,
+          directivitySharpness: catalogTrack.directivitySharpness,
+          rotationDeg: 0,
+          showShadows: false,
+        },
+      ]);
+    },
+    [addTracks, tracks]
+  );
+
+  const handleShareProject = async (
+    projectId?: string,
+    options?: { quizMode?: boolean }
+  ) => {
     const id = projectId ?? currentProjectId;
     if (!id || typeof window === "undefined") return;
-    const shareUrl = `${window.location.origin}${getProjectSharePath(id)}`;
+    const shareUrl = `${window.location.origin}${getProjectSharePath(id, options)}`;
     try {
       await navigator.clipboard.writeText(shareUrl);
-      appToast.info("link copied to clipboard");
+      appToast.info(
+        options?.quizMode ? "quiz link copied to clipboard" : "link copied to clipboard"
+      );
     } catch {
       appToast.error("could not copy link");
     }
@@ -1070,8 +1235,13 @@ function MixerPage() {
     setProfileError("");
     const projectId = await ensurePersistedProject(title);
     if (!projectId) return;
-    setProjectTitleBusy(true);
     const nextTitle = title.trim() || "Untitled project";
+    if (isProjectTitleTaken(nextTitle, projects, projectId)) {
+      setProfileError("A project with this name already exists");
+      toast.error("A project with this name already exists");
+      return;
+    }
+    setProjectTitleBusy(true);
     const { error } = await supabase
       .from("projects")
       .update({ title: nextTitle, updated_at: new Date().toISOString() })
@@ -1159,8 +1329,46 @@ function MixerPage() {
     event.currentTarget.value = "";
   };
 
+  const audioEngineTrackIds = useMemo(
+    () => (isQuizModeActive ? getQuizAudioTrackIds(tracks) : tracks.map((track) => track.id)),
+    [isQuizModeActive, tracks]
+  );
+  const quizGuessTracks = useMemo(
+    () => tracks.filter((track) => track.isQuizGuess),
+    [tracks]
+  );
+  const quizSourceTracks = useMemo(
+    () => tracks.filter((track) => track.quizHidden),
+    [tracks]
+  );
+  const quizReviewPairs = useMemo(
+    () => toQuizReviewPairs(quizResults, tracks),
+    [quizResults, tracks]
+  );
+
+  const handleQuizDone = useCallback(() => {
+    const results = scoreQuizTracks({
+      sourceTracks: quizSourceTracks,
+      guessTracks: quizGuessTracks,
+      listenerPosition,
+      roomScale,
+    });
+    setQuizResults(results);
+    setQuizMixCompare("actual");
+    setQuizReviewActive(true);
+    setQuizResultsOpen(true);
+  }, [quizGuessTracks, quizSourceTracks, listenerPosition, roomScale]);
+
+  const handleQuizCompareChange = useCallback((mode: QuizCompareMode) => {
+    setQuizMixCompare(mode);
+  }, []);
+
+  const handleQuizResultsClose = useCallback(() => {
+    setQuizResultsOpen(false);
+  }, []);
+
   const handlePlayToggle = useCallback(async () => {
-    const loadingNow = getTrackLoadingState(tracks.map((track) => track.id));
+    const loadingNow = getTrackLoadingState(audioEngineTrackIds);
     if (loadingNow.total > 0 && loadingNow.loaded < loadingNow.total) return;
     setTransportLoading(true);
     try {
@@ -1169,10 +1377,10 @@ function MixerPage() {
     } finally {
       setTransportLoading(false);
     }
-  }, [tracks]);
+  }, [audioEngineTrackIds]);
 
   useEffect(() => {
-    const ids = tracks.map((track) => track.id);
+    const ids = audioEngineTrackIds;
     if (ids.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading when no tracks exist
       setTrackBuffersLoading(false);
@@ -1191,7 +1399,7 @@ function MixerPage() {
     tick();
     const interval = window.setInterval(tick, 150);
     return () => window.clearInterval(interval);
-  }, [tracks]);
+  }, [audioEngineTrackIds]);
 
   useEffect(() => {
     if (startMode !== "demo" || !demoQueued || !isBootReady || trackBuffersLoading) return;
@@ -1221,7 +1429,10 @@ function MixerPage() {
   const summaryTrackNumber =
     summaryTrackId != null ? tracks.findIndex((track) => track.id === summaryTrackId) + 1 : 0;
   const playbackDisabled =
-    tracks.length === 0 || !isBootReady || trackBuffersLoading || transportLoading;
+    audioEngineTrackIds.length === 0 ||
+    !isBootReady ||
+    trackBuffersLoading ||
+    transportLoading;
   const diagnostics = summaryTrackId ? getTrackDiagnostics(summaryTrackId) : null;
   const showDevDiagnostics = process.env.NODE_ENV === "development";
   const shouldShowBootOverlay = workspaceActive && !isBootReady && startMode !== null;
@@ -1236,7 +1447,132 @@ function MixerPage() {
     window.setTimeout(() => setCopyToast(null), 1300);
   };
 
-  const sidebarContent = (
+  const sidebarContent = isQuizModeActive ? (
+    <>
+      <section className={styles.section}>
+        <h2 className={styles.heading}>Room</h2>
+        <div className={styles.quizFactRow}>
+          <span className={styles.quizFactLabel}>width</span>
+          <span className={styles.quizFactValue}>{`${(10 * roomScale[0]).toFixed(1)} m`}</span>
+        </div>
+        <div className={styles.quizFactRow}>
+          <span className={styles.quizFactLabel}>height</span>
+          <span className={styles.quizFactValue}>{`${(4 * roomScale[1]).toFixed(1)} m`}</span>
+        </div>
+        <div className={styles.quizFactRow}>
+          <span className={styles.quizFactLabel}>depth</span>
+          <span className={styles.quizFactValue}>{`${(10 * roomScale[2]).toFixed(1)} m`}</span>
+        </div>
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.heading}>Material</h2>
+        <p className={styles.quizMaterialValue}>
+          {ACOUSTIC_MATERIALS[acousticSettings.roomMaterial].name}
+        </p>
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.heading}>Tracks</h2>
+        {quizCatalogTracks.length === 0 ? (
+          <p className={styles.quizHint}>No tracks in this quiz.</p>
+        ) : (
+          <ul className={styles.quizTrackList}>
+            {quizCatalogTracks.map((catalogTrack, index) => {
+              const guessId = getQuizGuessTrackId(catalogTrack.id);
+              const isPlaced = tracks.some((track) => track.id === guessId);
+              return (
+                <li key={catalogTrack.id} className={styles.quizTrackRow}>
+                  <span className={styles.quizTrackNumber}>{index + 1}</span>
+                  <span className={styles.quizTrackName} title={catalogTrack.name}>
+                    {catalogTrack.name}
+                  </span>
+                  <button
+                    type="button"
+                    className={styles.placeTrackBtn}
+                    disabled={isPlaced || quizReviewActive}
+                    onClick={() => handlePlaceQuizTrack(catalogTrack, index + 1)}
+                  >
+                    {isPlaced ? "placed" : "place track"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {audioEngineTrackIds.length > 0 ? (
+          <div className={styles.quizPlayerWrap}>
+            <PlayerBar
+              isPlaying={isPlaying}
+              disabled={playbackDisabled}
+              loading={transportLoading || trackBuffersLoading || !isBootReady}
+              onTogglePlay={handlePlayToggle}
+            />
+          </div>
+        ) : null}
+
+        {quizGuessTracks.length > 0 && !quizReviewActive ? (
+          <div className={styles.quizGuessControls}>
+            <p className={styles.quizGuessHeading}>your direction guesses</p>
+            {quizGuessTracks.map((guess) => (
+              <div key={guess.id} className={styles.quizGuessControl}>
+                <span className={styles.quizGuessLabel}>
+                  {guess.quizDisplayIndex ?? "?"}. {guess.name}
+                </span>
+                <div className={styles.trackDirectivityRow}>
+                  <span className={styles.trackDirectivityLabel}>direction</span>
+                  <button
+                    type="button"
+                    className={`${styles.toggle} ${guess.isDirectivityEnabled ? styles.toggleOn : ""}`}
+                    onClick={() => toggleTrackDirectivity(guess.id)}
+                    aria-label={`Toggle direction for ${guess.name}`}
+                  >
+                    {guess.isDirectivityEnabled ? "on" : "off"}
+                  </button>
+                </div>
+                {guess.isDirectivityEnabled ? (
+                  <RotationDial
+                    value={guess.rotationDeg}
+                    onChange={(value) => setTrackRotationDeg(guess.id, value)}
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {quizReviewActive && quizGuessTracks.length > 0 ? (
+          <div className={styles.quizCompareSection}>
+            <p className={styles.quizGuessHeading}>compare mix</p>
+            <p className={styles.quizCompareHint}>
+              Switch the full mix between the original placements and your guesses.
+            </p>
+            <div className={styles.quizCompareToggle}>
+              <button
+                type="button"
+                className={`${styles.quizCompareBtn} ${
+                  quizMixCompare === "actual" ? styles.quizCompareBtnActive : ""
+                }`}
+                onClick={() => handleQuizCompareChange("actual")}
+              >
+                original mix
+              </button>
+              <button
+                type="button"
+                className={`${styles.quizCompareBtn} ${
+                  quizMixCompare === "guess" ? styles.quizCompareBtnActive : ""
+                }`}
+                onClick={() => handleQuizCompareChange("guess")}
+              >
+                your mix
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </section>
+    </>
+  ) : (
     <>
       <section className={`${styles.section} ${isReadOnlyPreview ? styles.readOnlyControls : ""}`}>
         <h2 className={styles.heading}>Room</h2>
@@ -1753,7 +2089,7 @@ function MixerPage() {
       : saveState === "error"
         ? `${styles.syncStatus} ${styles.syncStatusError}`
         : styles.syncStatus;
-  const showWorkspaceProjectControls = workspaceActive && !isReadOnlyPreview;
+  const showWorkspaceProjectControls = workspaceActive && !isReadOnlyPreview && !isQuizModeActive;
 
   const workspaceHeader = session ? (
     <header
@@ -1771,13 +2107,22 @@ function MixerPage() {
       </button>
       <div className={styles.profileWrap} ref={profileWrapRef}>
         {workspaceActive && currentProjectId && !isReadOnlyPreview && !isDemoScene ? (
-          <button
-            type="button"
-            className={styles.shareProjectBtn}
-            onClick={() => void handleShareProject()}
-          >
-            share project
-          </button>
+          <>
+            <button
+              type="button"
+              className={styles.shareProjectBtn}
+              onClick={() => void handleShareProject()}
+            >
+              share project
+            </button>
+            <button
+              type="button"
+              className={styles.shareProjectBtn}
+              onClick={() => void handleShareProject(undefined, { quizMode: true })}
+            >
+              share as a Quiz
+            </button>
+          </>
         ) : null}
         {showWorkspaceProjectControls && isDemoScene ? (
           <span className={styles.demoProjectIndicator}>Demo project</span>
@@ -1948,7 +2293,28 @@ function MixerPage() {
   return (
     <main className={styles.page}>
       {workspaceHeader}
-      {workspaceActive && isReadOnlyPreview ? (
+      {workspaceActive && isQuizModeActive ? (
+        <div className={styles.quizTopBar}>
+          <span className={styles.previewBadge}>quiz mode</span>
+          {quizReviewActive ? (
+            <button
+              type="button"
+              className={styles.previewPrimaryBtn}
+              onClick={() => setQuizResultsOpen(true)}
+            >
+              results
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={styles.previewPrimaryBtn}
+              onClick={handleQuizDone}
+            >
+              done
+            </button>
+          )}
+        </div>
+      ) : workspaceActive && isReadOnlyPreview ? (
         <div className={styles.previewDock}>
           <span className={styles.previewBadge}>preview mode (read-only)</span>
           {sessionUserId ? (
@@ -2046,9 +2412,15 @@ function MixerPage() {
             view={view}
             zoomSteps={zoomSteps}
             listenerPosition={listenerPosition}
-            onListenerPositionChange={setListenerPosition}
+            onListenerPositionChange={isListenerLocked ? () => undefined : setListenerPosition}
             onActiveObstacleChange={setActiveObstacleId}
-            isReadOnly={isReadOnlyPreview}
+            isReadOnly={isSceneObstacleReadOnly}
+            isListenerReadOnly={isListenerLocked}
+            isTrackReadOnly={isSceneTrackReadOnly}
+            showSceneObstacles={showQuizSceneObstacles}
+            showQuizReview={quizReviewActive}
+            quizReviewPairs={quizReviewPairs}
+            quizMixCompare={quizMixCompare}
           />
         ) : null}
       </section>
@@ -2171,6 +2543,12 @@ function MixerPage() {
           +
         </button>
       </div>
+
+      <QuizResultsModal
+        open={quizResultsOpen}
+        results={quizResults}
+        onClose={handleQuizResultsClose}
+      />
     </main>
   );
 }

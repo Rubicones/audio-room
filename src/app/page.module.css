@@ -160,6 +160,166 @@
   cursor: not-allowed;
 }
 
+.quizTopBar {
+  position: absolute;
+  left: 50%;
+  top: calc(28px + 4px + 32px + 4px + 12px);
+  transform: translateX(-50%);
+  z-index: 22;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 26px rgba(10, 10, 10, 0.08);
+}
+
+.quizReviewHint {
+  font-family: inherit;
+  font-size: 13px;
+  color: rgba(26, 26, 26, 0.68);
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.quizFactRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.quizFactLabel,
+.quizMaterialValue,
+.quizHint {
+  text-transform: lowercase;
+  opacity: 0.72;
+}
+
+.quizFactValue,
+.quizMaterialValue {
+  margin: 0;
+  font-size: 13px;
+}
+
+.quizTrackList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.quizTrackRow {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.quizTrackNumber {
+  font-size: 13px;
+  opacity: 0.65;
+}
+
+.quizTrackName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.placeTrackBtn {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink, #1a1a1a);
+  font-family: inherit;
+  font-size: 12px;
+  text-transform: lowercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.placeTrackBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.quizPlayerWrap {
+  margin-top: 12px;
+}
+
+.quizGuessControls {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.quizGuessHeading {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.72;
+  text-transform: lowercase;
+}
+
+.quizGuessControl {
+  display: grid;
+  gap: 6px;
+}
+
+.quizGuessLabel {
+  font-size: 12px;
+}
+
+.quizGuessHint {
+  font-size: 11px;
+  opacity: 0.6;
+  text-transform: lowercase;
+}
+
+.quizCompareSection {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.quizCompareHint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.68;
+  text-transform: lowercase;
+}
+
+.quizCompareToggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.quizCompareBtn {
+  min-height: 32px;
+  border: 2px solid var(--ink, #1a1a1a);
+  border-radius: 8px;
+  background: #ffffff;
+  font-family: inherit;
+  font-size: 12px;
+  text-transform: lowercase;
+  cursor: pointer;
+}
+
+.quizCompareBtnActive {
+  background: var(--ink, #1a1a1a);
+  color: #ffffff;
+}
+
 .previewGuestHeader {
   position: absolute;
   top: 16px;
@@ -819,6 +979,11 @@
   cursor: grabbing;
 }
 
+.rotationDialDisabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .rotationDialDot {
   position: absolute;
   left: 50%;
@@ -1385,6 +1550,10 @@
     left: 50%;
     transform: translateX(-50%);
     z-index: 14;
+  }
+
+  .quizTopBar {
+    top: calc(12px + 4px + 32px + 4px + 12px + env(safe-area-inset-top));
   }
 
   .settingsGear {

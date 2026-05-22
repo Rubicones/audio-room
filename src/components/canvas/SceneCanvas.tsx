@@ -22,6 +22,8 @@ import { ObstacleColumn } from "./ObstacleColumn";
 import { Room } from "./Room";
 import { useTrackStore } from "./TrackStore";
 import { TrackNodes } from "./TrackNodes";
+import { QuizReviewOverlay } from "./QuizReviewOverlay";
+import type { QuizReviewPair } from "@/lib/quizScoring";
 
 type SceneContentsProps = {
   view: CameraView;
@@ -30,6 +32,12 @@ type SceneContentsProps = {
   onListenerPositionChange: (position: [number, number, number]) => void;
   onActiveObstacleChange?: (obstacleId: string | null) => void;
   isReadOnly?: boolean;
+  isListenerReadOnly?: boolean;
+  isTrackReadOnly?: boolean;
+  showSceneObstacles?: boolean;
+  showQuizReview?: boolean;
+  quizReviewPairs?: QuizReviewPair[];
+  quizMixCompare?: "actual" | "guess";
 };
 
 type SceneCanvasProps = {
@@ -39,6 +47,12 @@ type SceneCanvasProps = {
   onListenerPositionChange: (position: [number, number, number]) => void;
   onActiveObstacleChange?: (obstacleId: string | null) => void;
   isReadOnly?: boolean;
+  isListenerReadOnly?: boolean;
+  isTrackReadOnly?: boolean;
+  showSceneObstacles?: boolean;
+  showQuizReview?: boolean;
+  quizReviewPairs?: QuizReviewPair[];
+  quizMixCompare?: "actual" | "guess";
 };
 
 type TrackLite = {
@@ -72,6 +86,12 @@ function SceneContents({
   onListenerPositionChange,
   onActiveObstacleChange,
   isReadOnly = false,
+  isListenerReadOnly = isReadOnly,
+  isTrackReadOnly = isReadOnly,
+  showSceneObstacles = false,
+  showQuizReview = false,
+  quizReviewPairs = [],
+  quizMixCompare = "actual",
 }: SceneContentsProps) {
   const {
     tracks,
@@ -112,6 +132,11 @@ function SceneContents({
     materialAlpha: 0.3,
   });
   const lastSyncRef = useRef(0);
+  const quizMixCompareRef = useRef<"actual" | "guess">("actual");
+
+  useLayoutEffect(() => {
+    quizMixCompareRef.current = quizMixCompare;
+  }, [quizMixCompare]);
 
   useLayoutEffect(() => {
     tracksRef.current = tracks.map((t) => ({
@@ -157,10 +182,10 @@ function SceneContents({
 
   useEffect(() => {
     pruneTracks(tracks.map((track) => track.id));
-    setTrackMixState(tracks);
+    setTrackMixState(tracks.filter((track) => !track.isQuizGuess));
     setAirAbsorptionEnabled(acousticSettings.enableAirAbsorption);
     for (const track of tracks) {
-      if (!track.audioUrl) continue;
+      if (track.isQuizGuess || !track.audioUrl) continue;
       void ensureTrackAudio(track);
       setTrackUiGainDb(track.id, track.gainDb);
     }
@@ -214,6 +239,8 @@ function SceneContents({
     }
 
     trackRefs.current.forEach((object, trackId) => {
+      const track = tracks.find((entry) => entry.id === trackId);
+      if (track?.isQuizGuess) return;
       object.getWorldPosition(worldPosition.current);
       trackPositionTuple.current[0] = worldPosition.current.x;
       trackPositionTuple.current[1] = worldPosition.current.y;
@@ -234,6 +261,31 @@ function SceneContents({
         directivity?.sharpness
       );
     });
+
+    for (const track of tracks) {
+      if (!track.quizHidden) continue;
+      const compareMode = quizMixCompareRef.current;
+      const guess =
+        showQuizReview && compareMode === "guess"
+          ? tracks.find(
+              (entry) => entry.isQuizGuess && entry.quizSourceTrackId === track.id
+            )
+          : null;
+      const audioTrack = guess ?? track;
+
+      setTrackPosition(track.id, audioTrack.position);
+      const rad = (audioTrack.rotationDeg * Math.PI) / 180;
+      directivityTuple.current[0] = Math.sin(rad);
+      directivityTuple.current[1] = 0;
+      directivityTuple.current[2] = -Math.cos(rad);
+      setTrackDirectivityState(
+        track.id,
+        directivityTuple.current,
+        audioTrack.isDirectivityEnabled,
+        audioTrack.directivityAlpha,
+        audioTrack.directivitySharpness
+      );
+    }
   });
 
   const onTrackDragCommit = (
@@ -259,7 +311,7 @@ function SceneContents({
 
       <DimensionLines scale={roomScale} />
 
-      {acousticSettings.showAcousticShadows
+      {showSceneObstacles || acousticSettings.showAcousticShadows
         ? obstacles.map((obstacle) => (
             <ObstacleColumn
               key={obstacle.id}
@@ -284,10 +336,19 @@ function SceneContents({
         onTrackRef={handleTrackRef}
         onDraggingTrackChange={setDraggingTrackId}
         isReadOnly={isReadOnly}
+        isListenerReadOnly={isListenerReadOnly}
+        isTrackReadOnly={isTrackReadOnly}
+        showQuizReview={showQuizReview}
       />
 
+      {showQuizReview && quizReviewPairs.length > 0 ? (
+        <QuizReviewOverlay pairs={quizReviewPairs} />
+      ) : null}
+
       <AcousticEducationViz
-        tracks={tracks.map((t) => ({
+        tracks={tracks
+          .filter((track) => !track.isQuizGuess)
+          .map((t) => ({
           id: t.id,
           gainDb: t.gainDb,
           isDirectivityEnabled: t.isDirectivityEnabled,
@@ -320,6 +381,12 @@ export function SceneCanvas({
   onListenerPositionChange,
   onActiveObstacleChange,
   isReadOnly = false,
+  isListenerReadOnly,
+  isTrackReadOnly,
+  showSceneObstacles = false,
+  showQuizReview = false,
+  quizReviewPairs = [],
+  quizMixCompare = "actual",
 }: SceneCanvasProps) {
   return (
     <Canvas
@@ -342,6 +409,12 @@ export function SceneCanvas({
         onListenerPositionChange={onListenerPositionChange}
         onActiveObstacleChange={onActiveObstacleChange}
         isReadOnly={isReadOnly}
+        isListenerReadOnly={isListenerReadOnly}
+        isTrackReadOnly={isTrackReadOnly}
+        showSceneObstacles={showSceneObstacles}
+        showQuizReview={showQuizReview}
+        quizReviewPairs={quizReviewPairs}
+        quizMixCompare={quizMixCompare}
       />
     </Canvas>
   );
