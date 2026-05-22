@@ -335,11 +335,17 @@
 }
 
 .previewGuestBrand {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
   font-size: 32px;
   line-height: 1;
   letter-spacing: -0.03em;
   text-transform: lowercase;
   color: var(--ink, #1a1a1a);
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 .syncStatus {

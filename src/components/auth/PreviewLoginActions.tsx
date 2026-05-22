@@ -10,9 +10,13 @@ import styles from "./PreviewLoginActions.module.css";
 
 type PreviewLoginActionsProps = {
   primaryButtonClassName?: string;
+  loginLabel?: string;
 };
 
-export function PreviewLoginActions({ primaryButtonClassName }: PreviewLoginActionsProps) {
+export function PreviewLoginActions({
+  primaryButtonClassName,
+  loginLabel = "log in to edit",
+}: PreviewLoginActionsProps) {
   const router = useRouter();
 
   const handleGoToLogin = () => {
@@ -34,7 +38,7 @@ export function PreviewLoginActions({ primaryButtonClassName }: PreviewLoginActi
   return (
     <div className={styles.group}>
       <button type="button" className={primaryButtonClassName} onClick={handleGoToLogin}>
-        log in to edit
+        {loginLabel}
       </button>
       <button
         type="button"

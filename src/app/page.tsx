@@ -2113,8 +2113,23 @@ function MixerPage() {
       <button
         type="button"
         className={styles.workspaceBrand}
-        onClick={showWorkspaceProjectControls ? () => void openProjectsDashboard() : undefined}
-        aria-label="Go to projects dashboard"
+        onClick={
+          showWorkspaceProjectControls
+            ? () => void openProjectsDashboard()
+            : isQuizModeActive
+              ? () => {
+                  if (sessionUserId) void openProjectsDashboard();
+                  else router.push("/");
+                }
+              : undefined
+        }
+        aria-label={
+          isQuizModeActive
+            ? sessionUserId
+              ? "Go to projects dashboard"
+              : "Go to home"
+            : "Go to projects dashboard"
+        }
       >
         foam
       </button>
@@ -2268,6 +2283,17 @@ function MixerPage() {
         ) : null}
       </div>
     </header>
+  ) : isQuizModeActive && workspaceActive ? (
+    <div className={styles.previewGuestHeader}>
+      <button
+        type="button"
+        className={styles.previewGuestBrand}
+        onClick={() => router.push("/")}
+        aria-label="Go to home"
+      >
+        foam
+      </button>
+    </div>
   ) : isReadOnlyPreview ? (
     <div className={styles.previewGuestHeader}>
       <span className={styles.previewGuestBrand}>foam</span>
@@ -2329,6 +2355,14 @@ function MixerPage() {
               done
             </button>
           )}
+        </div>
+      ) : null}
+      {workspaceActive && isQuizModeActive && !sessionUserId ? (
+        <div className={styles.previewDock}>
+          <PreviewLoginActions
+            primaryButtonClassName={styles.previewPrimaryBtn}
+            loginLabel="log in"
+          />
         </div>
       ) : workspaceActive && isReadOnlyPreview ? (
         <div className={styles.previewDock}>
