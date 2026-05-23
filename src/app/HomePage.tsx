@@ -2187,6 +2187,28 @@ function MixerPage() {
         ? `${styles.syncStatus} ${styles.syncStatusError}`
         : styles.syncStatus;
   const showWorkspaceProjectControls = workspaceActive && !isReadOnlyPreview && !isQuizModeActive;
+  const shareProjectActions =
+    workspaceActive && currentProjectId && isProjectEditable ? (
+      <>
+        <button
+          type="button"
+          className={styles.shareProjectBtn}
+          onClick={() => void handleShareProject()}
+        >
+          share project
+        </button>
+        <span className={styles.shareQuizGroup}>
+          <button
+            type="button"
+            className={styles.shareProjectBtn}
+            onClick={() => void handleShareProject(undefined, { quizMode: true })}
+          >
+            share as a Quiz
+          </button>
+          <HelpTooltip text="Recipients open a quiz challenge, not your editable project. They hear the mix without seeing source positions, place each track where they think it belongs, optionally guess direction, then finish to see scores and compare their mix to the original." />
+        </span>
+      </>
+    ) : null;
 
   const workspaceHeader = session ? (
     <header
@@ -2218,27 +2240,7 @@ function MixerPage() {
         foam
       </button>
       <div className={styles.profileWrap} ref={profileWrapRef}>
-        {workspaceActive && currentProjectId && isProjectEditable ? (
-          <>
-            <button
-              type="button"
-              className={styles.shareProjectBtn}
-              onClick={() => void handleShareProject()}
-            >
-              share project
-            </button>
-            <span className={styles.shareQuizGroup}>
-              <button
-                type="button"
-                className={styles.shareProjectBtn}
-                onClick={() => void handleShareProject(undefined, { quizMode: true })}
-              >
-                share as a Quiz
-              </button>
-              <HelpTooltip text="Recipients open a quiz challenge, not your editable project. They hear the mix without seeing source positions, place each track where they think it belongs, optionally guess direction, then finish to see scores and compare their mix to the original." />
-            </span>
-          </>
-        ) : null}
+        <div className={styles.headerShareActions}>{shareProjectActions}</div>
         {showWorkspaceProjectControls && isDemoScene ? (
           <span className={styles.demoProjectIndicator}>Demo project</span>
         ) : null}
@@ -2501,28 +2503,31 @@ function MixerPage() {
 
       <aside className={styles.sidebar}>{sidebarContent}</aside>
 
-      <button
-        type="button"
-        className={styles.settingsGear}
-        aria-label="Open settings"
-        onClick={() => setIsMobilePanelOpen(true)}
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="18"
-          height="18"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
+      <div className={styles.mobileToolbar}>
+        <div className={styles.mobileToolbarShare}>{shareProjectActions}</div>
+        <button
+          type="button"
+          className={styles.settingsGear}
+          aria-label="Open settings"
+          onClick={() => setIsMobilePanelOpen(true)}
         >
-          <path d="M4 7h16" />
-          <path d="M4 12h16" />
-          <path d="M4 17h16" />
-        </svg>
-      </button>
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M4 7h16" />
+            <path d="M4 12h16" />
+            <path d="M4 17h16" />
+          </svg>
+        </button>
+      </div>
 
       {isMobilePanelOpen ? (
         <div className={styles.mobileOverlay}>

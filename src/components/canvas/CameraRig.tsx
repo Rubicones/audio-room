@@ -1,4 +1,5 @@
 import { OrthographicCamera } from "@react-three/drei";
+import gsap from "gsap";
 import { useEffect, useRef, useState } from "react";
 import { OrthographicCamera as ThreeOrthographicCamera, Vector3 } from "three";
 
@@ -26,6 +27,8 @@ function isMobileViewport() {
 export function CameraRig({ view, zoomSteps }: CameraRigProps) {
   const cameraRef = useRef<ThreeOrthographicCamera>(null);
   const [mobile, setMobile] = useState(isMobileViewport);
+  const prevViewRef = useRef(view);
+  const prevMobileRef = useRef(mobile);
 
   useEffect(() => {
     const onResize = () => setMobile(isMobileViewport());
@@ -40,12 +43,50 @@ export function CameraRig({ view, zoomSteps }: CameraRigProps) {
     const target = view === "top-down" ? TOP_TARGET : ISO_TARGET;
     const baseZoom = view === "top-down" ? (mobile ? 34 : 52) : mobile ? 28 : 44;
     const nextZoom = Math.max(16, Math.min(90, baseZoom + zoomSteps * 3));
+    const viewChanged =
+      prevViewRef.current !== view || prevMobileRef.current !== mobile;
+    prevViewRef.current = view;
+    prevMobileRef.current = mobile;
 
-    camera.position.set(target.x, target.y, target.z);
+    if (viewChanged) {
+      gsap.killTweensOf(camera.position);
+      gsap.killTweensOf(camera);
+
+      gsap.to(camera.position, {
+        x: target.x,
+        y: target.y,
+        z: target.z,
+        duration: 0.7,
+        ease: "power2.inOut",
+        onUpdate: () => camera.lookAt(LOOK_AT),
+      });
+
+      gsap.to(camera, {
+        zoom: nextZoom,
+        duration: 0.7,
+        ease: "power2.inOut",
+        onUpdate: () => {
+          camera.lookAt(LOOK_AT);
+          camera.updateProjectionMatrix();
+        },
+      });
+      return;
+    }
+
+    gsap.killTweensOf(camera, "zoom");
     camera.zoom = nextZoom;
     camera.lookAt(LOOK_AT);
     camera.updateProjectionMatrix();
   }, [view, zoomSteps, mobile]);
+
+  useEffect(() => {
+    const camera = cameraRef.current;
+    return () => {
+      if (!camera) return;
+      gsap.killTweensOf(camera.position);
+      gsap.killTweensOf(camera);
+    };
+  }, []);
 
   return (
     <OrthographicCamera

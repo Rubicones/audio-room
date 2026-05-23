@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { AcousticObstacle, ObstacleType, Track, TrackConfig, Vec3 } from "./types";
-import type { RoomMaterialPreset } from "./acousticMaterials";
+import { DEFAULT_ROOM_MATERIAL, type RoomMaterialPreset } from "./acousticMaterials";
 import {
   createDefaultBoxObstacle,
   createDefaultObstacle,
@@ -64,7 +64,7 @@ type TrackStoreValue = {
 const TrackStoreContext = createContext<TrackStoreValue | null>(null);
 const DEFAULT_ROOM_SCALE: RoomScale = [1, 1, 1];
 const DEFAULT_ACOUSTIC_SETTINGS: AcousticSettings = {
-  roomMaterial: "brick",
+  roomMaterial: DEFAULT_ROOM_MATERIAL,
   enableRoomReverb: true,
   enableAirAbsorption: false,
   rt60Ms: 850,

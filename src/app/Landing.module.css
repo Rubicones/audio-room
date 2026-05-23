@@ -43,6 +43,25 @@
   line-height: 1.45;
 }
 
+.setupCopy {
+  display: grid;
+  gap: 14px;
+}
+
+.featureList {
+  max-width: 620px;
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 16px;
+  line-height: 1.45;
+  display: grid;
+  gap: 10px;
+}
+
+.featureList li::marker {
+  color: var(--ink, #1a1a1a);
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;

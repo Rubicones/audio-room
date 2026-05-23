@@ -1,7 +1,7 @@
 "use client";
 
 import type { AcousticObstacle, Track, Vec3 } from "@/components/canvas/types";
-import type { RoomMaterialPreset } from "@/components/canvas/acousticMaterials";
+import { DEFAULT_ROOM_MATERIAL, type RoomMaterialPreset } from "@/components/canvas/acousticMaterials";
 
 export type ProjectConfigJSON = {
   room: {
@@ -149,7 +149,7 @@ function asVec3(value: unknown, fallback: Vec3): Vec3 {
 
 export function deserializeProjectConfig(config: ProjectConfigJSON): ProjectHydrationState {
   const roomMaterialRaw = config.room?.materials?.left;
-  const roomMaterial = (roomMaterialRaw ?? "brick") as RoomMaterialPreset;
+  const roomMaterial = (roomMaterialRaw ?? DEFAULT_ROOM_MATERIAL) as RoomMaterialPreset;
   const tracks: Track[] = Array.isArray(config.tracks)
     ? config.tracks.map((track, index) => ({
         id: track.id || crypto.randomUUID(),

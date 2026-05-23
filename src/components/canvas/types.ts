@@ -67,6 +67,7 @@ export const MATERIAL_REGISTRY = {
 } as const;
 
 export type RoomMaterialKey = keyof typeof MATERIAL_REGISTRY;
+export const DEFAULT_ROOM_MATERIAL: RoomMaterialKey = "foam";
 export type ResonanceMaterialId =
   (typeof MATERIAL_REGISTRY)[RoomMaterialKey]["idReal"];
 

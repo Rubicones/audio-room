@@ -154,12 +154,6 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
         const hasGoogle = providers.has("google");
         const hasPassword =
             providers.has("email") || Boolean(hint?.seenPasswordLogin);
-        if (hasGoogle && !hasPassword) {
-            setEmailHintMessage(
-                "This email is linked to Google sign-in. Continue with Google, or use a different email for a new account.",
-            );
-            return;
-        }
         const known = readKnownEmails().has(normalizedEmail) || hasPassword;
         transitionTo(known ? "login" : "register");
     };
@@ -300,12 +294,32 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                         audio scenes.
                     </p>
                 ) : (
-                    <p className={styles.description}>
-                        A professional-grade spatial audio simulator for sound
-                        engineers and educators. Calculate acoustic
-                        distribution, critical distance, and occlusion with
-                        engineering precision.
-                    </p>
+                    <div className={styles.setupCopy}>
+                        <p className={styles.description}>
+                            The visual room acoustics simulator for the audio
+                            community. Foam is designed for educators, students
+                            of mixing and sound design, and musicians to explore
+                            how sound behaves in physical spaces.
+                        </p>
+                        <ul className={styles.featureList}>
+                            <li>
+                                <strong>Dynamic positioning:</strong> Move the
+                                listener or sound sources around the virtual room
+                                and hear the acoustic reflections shift in
+                                real-time.
+                            </li>
+                            <li>
+                                <strong>Acoustic physics made visual:</strong>{" "}
+                                See how room dimensions and materials shape the
+                                final sound.
+                            </li>
+                            <li>
+                                <strong>Interactive learning:</strong> Stop
+                                guessing how a room impacts the mix—see it, move
+                                it, and hear it instantly.
+                            </li>
+                        </ul>
+                    </div>
                 )}
 
                 {!isConfigured ? (
@@ -317,7 +331,9 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
 
                 {step === "entry" ? (
                     <div className={styles.authBody}>
-                        <p className={styles.dividerText}>login via these services</p>
+                        <p className={styles.dividerText}>
+                            login via these services
+                        </p>
 
                         <div className={styles.oauthGrid}>
                             <button
@@ -521,14 +537,14 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                             className={styles.startClean}
                             onClick={onStartClean}
                         >
-                            start clean
+                            create empty project
                         </button>
                         <button
                             type='button'
                             className={styles.startDemo}
                             onClick={onStartDemo}
                         >
-                            demo scene
+                            load a demo scene
                         </button>
                     </div>
                 ) : null}
@@ -538,9 +554,9 @@ export function Landing({ onStartClean, onStartDemo }: LandingProps) {
                     Questions or feedback?{" "}
                     <a
                         className={styles.contactLink}
-                        href='mailto:hello@foam.audio'
+                        href='rubiconhere@gmail.com'
                     >
-                        Contact us
+                        Contact
                     </a>
                 </p>
             </section>

@@ -1,4 +1,4 @@
-import { ACOUSTIC_MATERIALS, type RoomMaterialPreset } from "@/components/canvas/acousticMaterials";
+import { ACOUSTIC_MATERIALS, DEFAULT_ROOM_MATERIAL, type RoomMaterialPreset } from "@/components/canvas/acousticMaterials";
 import type { ProjectConfigJSON } from "@/lib/projectConfig";
 
 export function truncateTrackName(value: string, maxLength = 12): string {
@@ -19,7 +19,7 @@ export function getProjectCardSummary(config: ProjectConfigJSON | null | undefin
       )
     : [];
 
-  const materialKey = (config?.room?.materials?.left ?? "brick") as RoomMaterialPreset;
+  const materialKey = (config?.room?.materials?.left ?? DEFAULT_ROOM_MATERIAL) as RoomMaterialPreset;
   const roomMaterial = ACOUSTIC_MATERIALS[materialKey]?.name ?? materialKey;
 
   const scale = config?.room?.scale;

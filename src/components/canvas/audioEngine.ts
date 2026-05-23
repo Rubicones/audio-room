@@ -5,6 +5,7 @@ import { Vector3 } from "three";
 import type { Track } from "./types";
 import {
   ACOUSTIC_MATERIALS,
+  DEFAULT_ROOM_MATERIAL,
   type RoomMaterialPreset,
   type ResonanceMaterialId,
 } from "./acousticMaterials";
@@ -131,8 +132,9 @@ const DIAGNOSTICS_LOG_THROTTLE_MS = 500;
 const BASE_TRACK_GAIN_LINEAR = 2; // +6 dB baseline for all tracks
 const DYNAMIC_ACOUSTICS_RAMP_SEC = 0.08;
 
-let currentRoomMaterial: RoomMaterialPreset = "brick";
-let currentResonanceMaterialId: ResonanceMaterialId = "brick-bare";
+let currentRoomMaterial: RoomMaterialPreset = DEFAULT_ROOM_MATERIAL;
+let currentResonanceMaterialId: ResonanceMaterialId =
+  ACOUSTIC_MATERIALS[DEFAULT_ROOM_MATERIAL].idReal;
 let isReverbNodeConnected = false;
 let lastMaterialDiagnostic = "";
 
