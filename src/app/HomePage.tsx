@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CSSProperties } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { DefaultLoadingManager } from "three";
@@ -98,6 +98,7 @@ const DEMO_TRACK_FILES = [
   "overheads 2.webm",
 ] as const;
 const AUDIO_BUCKET = "audio";
+const UPLOAD_RETRY_DELAY_MS = 5000;
 
 type ProjectRow = {
   id: string;
@@ -142,6 +143,15 @@ function extractAudioObjectPath(audioUrl: string): string | null {
   } catch {
     return null;
   }
+}
+
+function sanitizeTrackFileName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function buildDemoTracks(startIndex: number): TrackConfig[] {
@@ -218,6 +228,119 @@ function RotationDial({
 }
 
 const TOOLTIP_DELAY_MS = 300;
+
+function HoverTooltip({
+  text,
+  ariaLabel,
+  className,
+  onClick,
+  children,
+}: {
+  text: string;
+  ariaLabel: string;
+  className?: string;
+  onClick?: () => void;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
+  const timerRef = useRef<number | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const updatePosition = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const popW = 240;
+    const popH = 120;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const canRight = rect.right + 10 + popW < vw - 8;
+    const left = canRight ? rect.right + 10 : Math.max(8, rect.left - popW - 10);
+    const top = rect.top + popH + 8 < vh ? rect.top : Math.max(8, rect.bottom - popH);
+    setPopoverStyle({ left, top, width: Math.min(popW, vw - 16), position: "fixed" });
+  };
+
+  const showDelayed = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      updatePosition();
+      setOpen(true);
+    }, TOOLTIP_DELAY_MS);
+  };
+
+  const hide = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+    setOpen(false);
+  };
+
+  useEffect(() => {
+    const onResize = () => {
+      if (open) updatePosition();
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    };
+  }, [open]);
+
+  return (
+    <span className={styles.helpWrap}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={className}
+        aria-label={ariaLabel}
+        onClick={onClick}
+        onMouseEnter={showDelayed}
+        onMouseLeave={hide}
+        onFocus={showDelayed}
+        onBlur={hide}
+      >
+        {children}
+      </button>
+      {open ? (
+        <span className={styles.helpBubble} style={popoverStyle}>
+          {text}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function TrackUploadRetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <HoverTooltip
+      text="This track was not uploaded to the server. Click to start over."
+      ariaLabel="Retry uploading track to server"
+      className={styles.trackUploadRetry}
+      onClick={onRetry}
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
+        <path
+          d="M12 4a8 8 0 1 1-5.66 13.28"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
+        <path
+          d="M4 4v4h4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path d="M12 15v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M12 11h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+        <path d="M12 9 10.2 12.5h3.6Z" fill="currentColor" />
+      </svg>
+    </HoverTooltip>
+  );
+}
 
 function HelpTooltip({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
@@ -371,6 +494,7 @@ function MixerPage() {
     updateObstacle,
     removeTrack,
     updateTrackName,
+    updateTrackColor,
     toggleTrackMute,
     toggleTrackSolo,
     updateTrackAudioUrl,
@@ -426,6 +550,13 @@ function MixerPage() {
   const [isDemoScene, setIsDemoScene] = useState(false);
   const [isHydrating, setIsHydrating] = useState(false);
   const [pendingUploadsCount, setPendingUploadsCount] = useState(0);
+  const [failedUploadTrackIds, setFailedUploadTrackIds] = useState<Record<string, true>>({});
+  const [uploadingTrackIds, setUploadingTrackIds] = useState<Record<string, true>>({});
+  const trackSourceFilesRef = useRef<Map<string, File>>(new Map());
+  const uploadRetryWaitsRef = useRef<
+    Map<string, { timer: number; resolve: (shouldRetry: boolean) => void }>
+  >(new Map());
+  const uploadInFlightRef = useRef<Set<string>>(new Set());
   const [quizCatalogTracks, setQuizCatalogTracks] = useState<Track[]>([]);
   const [quizResultsOpen, setQuizResultsOpen] = useState(false);
   const [quizReviewActive, setQuizReviewActive] = useState(false);
@@ -1283,20 +1414,14 @@ function MixerPage() {
     }
   };
 
-  const handleFileAdd = (event: ChangeEvent<HTMLInputElement>) => {
-    if (!isProjectEditable) return;
-    const sanitizeFileName = (value: string) =>
-      value
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9._-]+/g, "-")
-        .replace(/-+/g, "-")
-        .replace(/^-|-$/g, "");
-    const uploadToAudioBucket = async (file: File) => {
-      if (!supabase || !sessionUserId) return URL.createObjectURL(file);
+  const uploadTrackToServer = useCallback(
+    async (file: File): Promise<{ remoteUrl: string; uploaded: boolean }> => {
+      if (!supabase || !sessionUserId) {
+        return { remoteUrl: URL.createObjectURL(file), uploaded: false };
+      }
       const ext = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")) : "";
       const base = file.name.replace(/\.[^/.]+$/, "");
-      const safeBase = sanitizeFileName(base) || "track";
+      const safeBase = sanitizeTrackFileName(base) || "track";
       const filePath = `${sessionUserId}/${Date.now()}-${crypto.randomUUID()}-${safeBase}${ext}`;
       const { error } = await supabase.storage.from(AUDIO_BUCKET).upload(filePath, file, {
         upsert: false,
@@ -1304,39 +1429,197 @@ function MixerPage() {
       });
       if (error) {
         setProfileError(error.message);
-        return URL.createObjectURL(file);
+        return { remoteUrl: URL.createObjectURL(file), uploaded: false };
       }
       const { data: signedData, error: signedError } = await supabase.storage
         .from(AUDIO_BUCKET)
         .createSignedUrl(filePath, 60 * 60 * 8);
-      if (!signedError && signedData?.signedUrl) return signedData.signedUrl;
+      if (!signedError && signedData?.signedUrl) {
+        return { remoteUrl: signedData.signedUrl, uploaded: true };
+      }
       const { data } = supabase.storage.from(AUDIO_BUCKET).getPublicUrl(filePath);
-      return data.publicUrl || URL.createObjectURL(file);
-    };
+      const publicUrl = data.publicUrl;
+      if (publicUrl && !publicUrl.startsWith("blob:")) {
+        return { remoteUrl: publicUrl, uploaded: true };
+      }
+      return { remoteUrl: URL.createObjectURL(file), uploaded: false };
+    },
+    [sessionUserId]
+  );
+
+  const uploadTrackForProject = useCallback(
+    async (trackId: string, file: File) => {
+      if (!supabase || !sessionUserId) return;
+      if (uploadInFlightRef.current.has(trackId)) return;
+
+      uploadInFlightRef.current.add(trackId);
+      setFailedUploadTrackIds((current) => {
+        if (!current[trackId]) return current;
+        const next = { ...current };
+        delete next[trackId];
+        return next;
+      });
+
+      const attemptUpload = async (): Promise<boolean> => {
+        setUploadingTrackIds((current) => ({ ...current, [trackId]: true }));
+        setPendingUploadsCount((current) => current + 1);
+        try {
+          const { remoteUrl, uploaded } = await uploadTrackToServer(file);
+          if (uploaded) {
+            updateTrackAudioUrl(trackId, remoteUrl);
+            setFailedUploadTrackIds((current) => {
+              if (!current[trackId]) return current;
+              const next = { ...current };
+              delete next[trackId];
+              return next;
+            });
+            trackSourceFilesRef.current.delete(trackId);
+            return true;
+          }
+          return false;
+        } finally {
+          setUploadingTrackIds((current) => {
+            if (!current[trackId]) return current;
+            const next = { ...current };
+            delete next[trackId];
+            return next;
+          });
+          setPendingUploadsCount((current) => Math.max(0, current - 1));
+        }
+      };
+
+      const waitBeforeRetry = () =>
+        new Promise<boolean>((resolve) => {
+          const timer = window.setTimeout(() => {
+            uploadRetryWaitsRef.current.delete(trackId);
+            resolve(true);
+          }, UPLOAD_RETRY_DELAY_MS);
+          uploadRetryWaitsRef.current.set(trackId, { timer, resolve });
+        });
+
+      try {
+        const firstOk = await attemptUpload();
+        if (firstOk) return;
+
+        const shouldRetry = await waitBeforeRetry();
+        if (!shouldRetry || !trackSourceFilesRef.current.has(trackId)) return;
+
+        const secondOk = await attemptUpload();
+        if (!secondOk) {
+          setFailedUploadTrackIds((current) => ({ ...current, [trackId]: true }));
+        }
+      } finally {
+        uploadInFlightRef.current.delete(trackId);
+      }
+    },
+    [sessionUserId, updateTrackAudioUrl, uploadTrackToServer]
+  );
+
+  const handleRetryTrackUpload = useCallback(
+    (trackId: string) => {
+      if (!isProjectEditable) return;
+      const storedFile = trackSourceFilesRef.current.get(trackId);
+      if (storedFile) {
+        void uploadTrackForProject(trackId, storedFile);
+        return;
+      }
+      const track = tracks.find((item) => item.id === trackId);
+      if (!track?.audioUrl.startsWith("blob:")) return;
+      void (async () => {
+        try {
+          const response = await fetch(track.audioUrl);
+          const blob = await response.blob();
+          const ext = blob.type.includes("/") ? `.${blob.type.split("/")[1]}` : "";
+          const retryFile = new File([blob], `${track.name}${ext}`, {
+            type: blob.type || "audio/wav",
+          });
+          trackSourceFilesRef.current.set(trackId, retryFile);
+          await uploadTrackForProject(trackId, retryFile);
+        } catch {
+          setFailedUploadTrackIds((current) => ({ ...current, [trackId]: true }));
+        }
+      })();
+    },
+    [isProjectEditable, tracks, uploadTrackForProject]
+  );
+
+  const cancelTrackUploadRetryWait = useCallback((trackId: string) => {
+    const pending = uploadRetryWaitsRef.current.get(trackId);
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    pending.resolve(false);
+    uploadRetryWaitsRef.current.delete(trackId);
+  }, []);
+
+  const handleRemoveTrack = useCallback(
+    (trackId: string) => {
+      cancelTrackUploadRetryWait(trackId);
+      uploadInFlightRef.current.delete(trackId);
+      trackSourceFilesRef.current.delete(trackId);
+      setFailedUploadTrackIds((current) => {
+        if (!current[trackId]) return current;
+        const next = { ...current };
+        delete next[trackId];
+        return next;
+      });
+      setUploadingTrackIds((current) => {
+        if (!current[trackId]) return current;
+        const next = { ...current };
+        delete next[trackId];
+        return next;
+      });
+      removeTrack(trackId);
+    },
+    [removeTrack, cancelTrackUploadRetryWait]
+  );
+
+  useEffect(() => {
+    const activeIds = new Set(tracks.map((track) => track.id));
+    for (const id of trackSourceFilesRef.current.keys()) {
+      if (!activeIds.has(id)) trackSourceFilesRef.current.delete(id);
+    }
+    for (const id of uploadRetryWaitsRef.current.keys()) {
+      if (!activeIds.has(id)) {
+        cancelTrackUploadRetryWait(id);
+        uploadInFlightRef.current.delete(id);
+      }
+    }
+    setFailedUploadTrackIds((current) => {
+      const next = Object.fromEntries(
+        Object.keys(current)
+          .filter((id) => activeIds.has(id))
+          .map((id) => [id, true] as const)
+      );
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+    setUploadingTrackIds((current) => {
+      const next = Object.fromEntries(
+        Object.keys(current)
+          .filter((id) => activeIds.has(id))
+          .map((id) => [id, true] as const)
+      );
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+  }, [tracks, cancelTrackUploadRetryWait]);
+
+  const handleFileAdd = (event: ChangeEvent<HTMLInputElement>) => {
+    if (!isProjectEditable) return;
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
     setTrackBuffersLoading(true);
-    setPendingUploadsCount((current) => current + files.length);
     const newTracks = files.map((file, index) => ({
       id: crypto.randomUUID(),
-        name: file.name.replace(/\.[^/.]+$/, ""),
+      name: file.name.replace(/\.[^/.]+$/, ""),
       color: PALETTE[(tracks.length + index) % PALETTE.length],
-        audioUrl: URL.createObjectURL(file),
+      audioUrl: URL.createObjectURL(file),
     }));
+    newTracks.forEach((track, index) => {
+      trackSourceFilesRef.current.set(track.id, files[index]);
+    });
     addTracks(newTracks);
-    void (async () => {
-      await Promise.all(
-        files.map(async (file, index) => {
-          try {
-            const remoteUrl = await uploadToAudioBucket(file);
-            if (remoteUrl.startsWith("blob:")) return;
-            updateTrackAudioUrl(newTracks[index].id, remoteUrl);
-          } finally {
-            setPendingUploadsCount((current) => Math.max(0, current - 1));
-          }
-        })
-      );
-    })();
+    void Promise.all(
+      newTracks.map((track, index) => uploadTrackForProject(track.id, files[index]))
+    );
     event.currentTarget.value = "";
   };
 
@@ -1997,13 +2280,37 @@ function MixerPage() {
 
         <div className={isReadOnlyPreview ? styles.readOnlyControls : undefined}>
         <ul className={styles.trackList}>
-          {tracks.map((track, idx) => (
+          {tracks.map((track, idx) => {
+            const showUploadRetry =
+              isProjectEditable &&
+              Boolean(failedUploadTrackIds[track.id]) &&
+              !uploadingTrackIds[track.id];
+            return (
             <li key={track.id} className={styles.trackCard}>
-              <div className={styles.trackItem}>
-                <span
-                  className={styles.colorDot}
+              <div
+                className={`${styles.trackItem}${
+                  showUploadRetry ? ` ${styles.trackItemWithRetry}` : ""
+                }`}
+              >
+                {showUploadRetry ? (
+                  <TrackUploadRetryButton
+                    onRetry={() => handleRetryTrackUpload(track.id)}
+                  />
+                ) : null}
+                <label
+                  className={styles.colorDotPicker}
                   style={{ backgroundColor: track.color }}
-                />
+                  title={`Color for ${track.name}`}
+                >
+                  <input
+                    type="color"
+                    className={styles.colorDotInput}
+                    aria-label={`Color for ${track.name}`}
+                    value={track.color}
+                    disabled={!isProjectEditable}
+                    onChange={(e) => updateTrackColor(track.id, e.target.value)}
+                  />
+                </label>
                 <span className={styles.trackIndex}>{idx + 1}</span>
               <input
                   className={styles.trackName}
@@ -2051,7 +2358,7 @@ function MixerPage() {
                     className={`${styles.removeBtn} ${
                       !trackLoadedMap[track.id] ? styles.removeBtnDisabled : ""
                     }`}
-                    onClick={() => removeTrack(track.id)}
+                    onClick={() => handleRemoveTrack(track.id)}
                     disabled={!trackLoadedMap[track.id]}
                     aria-label={`Remove ${track.name}`}
                     title={!trackLoadedMap[track.id] ? "Wait until track loads" : "Remove track"}
@@ -2148,7 +2455,8 @@ function MixerPage() {
                 </div>
               ) : null}
             </li>
-          ))}
+            );
+          })}
         </ul>
 
         {!isProjectEditable ? null : (

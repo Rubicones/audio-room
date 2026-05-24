@@ -83,6 +83,26 @@ export function PlayerBar({
   );
 
   useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== "Space" && event.key !== " ") return;
+      if (event.repeat) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.closest("input, textarea, select, [contenteditable='true']"))
+      ) {
+        return;
+      }
+      if (disabled || loading) return;
+      event.preventDefault();
+      onTogglePlay();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [disabled, loading, onTogglePlay]);
+
+  useEffect(() => {
     if (!dragging) return;
     const move = (event: PointerEvent) => {
       const next = setFromClientX(event.clientX);

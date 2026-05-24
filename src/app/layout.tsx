@@ -13,6 +13,7 @@ import {
   getSiteUrl,
 } from "@/lib/siteMetadata";
 import "./globals.css";
+import { Analytics } from "@vercel/analytics/next"
 
 const itim = Itim({
   variable: "--font-itim",
@@ -96,6 +97,7 @@ export default function RootLayout({
           {children}
           <AppToaster />
         </AuthStoreProvider>
+        <Analytics />
       </body>
     </html>
   );

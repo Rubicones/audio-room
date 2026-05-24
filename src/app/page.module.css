@@ -1046,6 +1046,34 @@
   font-family: inherit;
 }
 
+.trackItemWithRetry {
+  grid-template-columns: 24px 9px 14px 1fr auto auto auto auto;
+}
+
+.trackUploadRetry {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: #a12020;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.trackUploadRetry:hover {
+  color: #c62828;
+}
+
+.trackUploadRetry:focus-visible {
+  outline: 2px solid #a12020;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .summaryBtn {
   width: 24px;
   height: 24px;
@@ -1065,11 +1093,33 @@
   background: #f5f5f5;
 }
 
-.colorDot {
+.colorDotPicker {
+  position: relative;
   width: 9px;
   height: 9px;
   border-radius: 999px;
   flex-shrink: 0;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.colorDotPicker:has(input:disabled) {
+  cursor: default;
+}
+
+.colorDotInput {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
+.colorDotInput:disabled {
+  cursor: default;
 }
 
 .trackIndex {
