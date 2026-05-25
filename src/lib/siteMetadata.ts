@@ -81,11 +81,11 @@ export function buildPageMetadata({
 }
 
 export const workspacePageMetadata = buildPageMetadata({
-  title: "Interactive Audio Mixer & Sandbox",
+  title: "Acoustics and Spatial Audio simulator",
   description:
     "Design your custom acoustic environment. Adjust room dimensions, toggle wall materials, place obstacles, and position sound sources in a real-time web audio simulation.",
   path: "/",
-  imageAlt: "Foam interactive audio mixer and acoustic sandbox",
+  imageAlt: "Acoustics and Spatial Audio simulator",
 });
 
 export const sharedProjectMetadata = buildPageMetadata({
