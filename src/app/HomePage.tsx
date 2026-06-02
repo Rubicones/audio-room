@@ -678,6 +678,7 @@ function MixerPage() {
       const resolved = await Promise.all(
         projectTracks.map(async (track) => {
           if (!track.audioUrl || track.audioUrl.startsWith("blob:")) return track;
+          if (track.audioUrl.includes("/storage/v1/object/public/")) return track;
           const objectPath = extractAudioObjectPath(track.audioUrl);
           if (!objectPath) return track;
           const { data, error } = await supabase.storage
@@ -914,7 +915,18 @@ function MixerPage() {
           setCurrentProjectId(data.id);
           setCurrentProjectOwnerId(data.user_id);
           setCurrentProjectTitle(data.title || "Untitled project");
-          markProjectSavedBaseline(data.config as ProjectConfigJSON);
+          markProjectSavedBaseline(serializeProjectConfig({
+            roomScale: hydrated.roomScale,
+            roomMaterial: hydrated.roomMaterial,
+            showShadows: hydrated.showShadows,
+            showAttenuation: hydrated.showAttenuation,
+            showCriticalDistance: hydrated.showCriticalDistance,
+            airAbsorptionEnabled: hydrated.airAbsorptionEnabled,
+            listenerPosition: hydrated.listenerPosition,
+            listenerRotationDeg: hydrated.listenerRotationDeg,
+            obstacles: hydrated.obstacles,
+            tracks: hydratedTracks,
+          }));
           setIsDemoScene(false);
           setSaveState("saved");
           setIsBootReady(false);
@@ -1161,7 +1173,18 @@ function MixerPage() {
         setCurrentProjectId(project.id);
         setCurrentProjectOwnerId(sessionUserId);
         setCurrentProjectTitle(project.title || "Untitled project");
-        markProjectSavedBaseline(project.config);
+        markProjectSavedBaseline(serializeProjectConfig({
+          roomScale: hydrated.roomScale,
+          roomMaterial: hydrated.roomMaterial,
+          showShadows: hydrated.showShadows,
+          showAttenuation: hydrated.showAttenuation,
+          showCriticalDistance: hydrated.showCriticalDistance,
+          airAbsorptionEnabled: hydrated.airAbsorptionEnabled,
+          listenerPosition: hydrated.listenerPosition,
+          listenerRotationDeg: hydrated.listenerRotationDeg,
+          obstacles: hydrated.obstacles,
+          tracks: hydratedTracks,
+        }));
         setIsBootReady(false);
         setAppPhase("workspace");
         setIsDemoScene(false);
